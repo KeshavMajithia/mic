@@ -22,7 +22,7 @@ function App() {
     setResults(null);
 
     try {
-      const response = await axios.post('http://localhost:5000/api/get-rates', {
+      const response = await axios.post(`${process.env.REACT_APP_API_URL}/api/get-rates`, {
         country: country.trim(),
         weight: parseFloat(weight)
       });
