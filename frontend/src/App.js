@@ -22,7 +22,7 @@ function App() {
     setResults(null);
 
     try {
-      const response = await axios.post(`https://mic-789615430879.asia-south1.run.app/api/get-rates`, {
+      const response = await axios.post(`${process.env.REACT_APP_API_URL}/api/get-rates`, {
         country: country.trim(),
         weight: parseFloat(weight)
       });
