@@ -1,0 +1,13 @@
+{
+  "files": {
+    "main.css": "/mic/static/css/main.cddfc6b4.css",
+    "main.js": "/mic/static/js/main.e829cb90.js",
+    "index.html": "/mic/index.html",
+    "main.cddfc6b4.css.map": "/mic/static/css/main.cddfc6b4.css.map",
+    "main.e829cb90.js.map": "/mic/static/js/main.e829cb90.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.cddfc6b4.css",
+    "static/js/main.e829cb90.js"
+  ]
+}
