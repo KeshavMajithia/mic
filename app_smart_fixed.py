@@ -18,6 +18,11 @@ model = genai.GenerativeModel('gemini-1.5-flash')
 # Global variable to store the master data
 master_data = None
 
+# Load the master JSON file robustly
+MASTER_JSON_PATH = os.path.join(os.path.dirname(__file__), 'courier_rates_master.json')
+with open(MASTER_JSON_PATH, 'r', encoding='utf-8') as f:
+    master_data = json.load(f)
+
 def load_master_json():
     """Load the master JSON file once at startup"""
     global master_data
