@@ -1,0 +1,5 @@
+runtime: python310
+entrypoint: gunicorn -b :$PORT app_smart_fixed:app
+
+env_variables:
+  GEMINI_API_KEY: "YOUR_ACTUAL_API_KEY"
