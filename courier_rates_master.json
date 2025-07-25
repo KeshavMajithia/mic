@@ -34148,7 +34148,7 @@
               "weight_range": null
             }
           },
-          "UNITED ARAB EMIRATES": {
+          "UAE": {
             "0.5": {
               "rate": 365.0,
               "currency": "INR",
@@ -38447,7 +38447,7 @@
         "TAIWAN",
         "THAILAND",
         "UK - SKYNET",
-        "UNITED ARAB EMIRATES",
+        "UAE",
         "USA",
         "VIETNAM"
       ],
@@ -60295,7 +60295,7 @@
   },
   "zone_mappings": {
     "FedEx": {
-      "U.A.E.": "A",
+      "UAE": "A",
       "BANGLADESH": "B",
       "BRUTAN": "B",
       "MALDIVES": "B",
@@ -60355,7 +60355,7 @@
       "NETHERLANDS": "F",
       "SPAIN": "F",
       "SWITZERLAND": "F",
-      "UNITED": "F",
+      "UK": "F",
       "DENMARK": "F",
       "FAROE ISLANDS": "F",
       "FRANCE": "F",
@@ -60363,7 +60363,7 @@
       "GREENLAND": "F",
       "MEXICO": "G",
       "REST OF": "G",
-      "U.S.A.": "G",
+      "USA": "G",
       "JAPAN": "H",
       "ALBANIA": "I",
       "ANDORRA": "I",
@@ -60521,7 +60521,7 @@
       "MALDIVES": "1",
       "NEPAL": "1",
       "SRI LANKA": "1",
-      "UNITED ARAB EMIRATES": "1",
+      "UAE": "1",
       "HONG KONG": "2",
       "MALAYSIA": "2",
       "SINGAPORE": "2",
@@ -60568,7 +60568,7 @@
       "SPAIN": "7",
       "SWEDEN": "7",
       "SWITZERLAND": "7",
-      "UNITED KINGDOM": "7",
+      "UK": "7",
       "VATICAN CITY STATE": "7",
       "ANDORRA": "8",
       "BELARUS": "8",
@@ -60674,7 +60674,6 @@
       "MAURITIUS": "5",
       "CANADA": "6",
       "USA": "6",
-      "UNITED STATES": "6",
       "GERMANY": "6",
       "FRANCE": "6",
       "UNITED KINGDOM": "6",
@@ -60867,7 +60866,7 @@
       "UK - SKYNET",
       "UK-GPX",
       "UK-PPX",
-      "UNITED ARAB EMIRATES",
+      "UAE",
       "USA",
       "VIETNAM",
       "ZONE 1",
