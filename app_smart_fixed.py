@@ -12,8 +12,20 @@ app = Flask(__name__)
 CORS(app)
 
 # Configure Gemini
-genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
-model = genai.GenerativeModel('gemini-1.5-flash')
+# Try VITE_GEMINI_API_KEY first (for frontend), fall back to GEMINI_API_KEY
+gemini_api_key = os.getenv('VITE_GEMINI_API_KEY') or os.getenv('GEMINI_API_KEY')
+if not gemini_api_key:
+    print("⚠️  Warning: GEMINI_API_KEY not found in environment variables")
+    print("   Please add your Gemini API key to .env file as VITE_GEMINI_API_KEY")
+else:
+    print("✅ Gemini API key found in environment variables")
+
+try:
+    genai.configure(api_key=gemini_api_key)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    print("✅ Gemini API configured successfully")
+except Exception as e:
+    print(f"❌ Error configuring Gemini API: {str(e)}")
 
 # Global variable to store the master data
 master_data = None
