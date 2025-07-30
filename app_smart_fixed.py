@@ -10,19 +10,8 @@ from dotenv import load_dotenv
 load_dotenv()
 app = Flask(__name__)
 
-# Enhanced CORS configuration
-CORS(app, 
-     origins=[
-         "https://keshavmajithia.github.io",
-         "http://localhost:3000",
-         "http://localhost:8080",
-         "http://127.0.0.1:3000",
-         "http://127.0.0.1:8080"
-     ], 
-     methods=["GET", "POST", "OPTIONS"],
-     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
-     supports_credentials=False,
-     send_wildcard=False)
+# Simple CORS configuration that WILL work
+CORS(app, origins="*", methods=["GET", "POST", "OPTIONS"], allow_headers="*")
 
 # Configure Gemini with better error handling
 gemini_api_key = os.getenv('VITE_GEMINI_API_KEY') or os.getenv('GEMINI_API_KEY')
