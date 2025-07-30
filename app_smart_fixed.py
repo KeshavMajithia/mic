@@ -2,53 +2,99 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import json
 import os
+import traceback
 import google.generativeai as genai
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 app = Flask(__name__)
-CORS(app, origins=[
-    "http://localhost:8080",
-    "https://keshavmajithia.github.io"
-], allow_headers=["Content-Type"], methods=["GET", "POST"])
 
-# Configure Gemini
-# Try VITE_GEMINI_API_KEY first (for frontend), fall back to GEMINI_API_KEY
+# Enhanced CORS configuration
+CORS(app, 
+     origins=[
+         "http://localhost:8080",
+         "https://keshavmajithia.github.io",
+         "http://localhost:3000",  # Added for local development
+         "http://127.0.0.1:8080",
+         "http://127.0.0.1:3000"
+     ], 
+     allow_headers=["Content-Type", "Authorization", "Access-Control-Allow-Credentials"],
+     methods=["GET", "POST", "OPTIONS"],
+     supports_credentials=True)
+
+# Add manual CORS headers for better compatibility
+@app.after_request
+def after_request(response):
+    origin = request.headers.get('Origin')
+    allowed_origins = [
+        "http://localhost:8080",
+        "https://keshavmajithia.github.io", 
+        "http://localhost:3000",
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:3000"
+    ]
+    
+    if origin in allowed_origins:
+        response.headers.add('Access-Control-Allow-Origin', origin)
+    
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    return response
+
+# Configure Gemini with better error handling
 gemini_api_key = os.getenv('VITE_GEMINI_API_KEY') or os.getenv('GEMINI_API_KEY')
+gemini_configured = False
+
 if not gemini_api_key:
     print("⚠️  Warning: GEMINI_API_KEY not found in environment variables")
-    print("   Please add your Gemini API key to .env file as VITE_GEMINI_API_KEY")
+    print("   Please add your Gemini API key to .env file as VITE_GEMINI_API_KEY or GEMINI_API_KEY")
 else:
-    print("✅ Gemini API key found in environment variables")
-
-try:
-    genai.configure(api_key=gemini_api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    print("✅ Gemini API configured successfully")
-except Exception as e:
-    print(f"❌ Error configuring Gemini API: {str(e)}")
+    try:
+        genai.configure(api_key=gemini_api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        print("✅ Gemini API configured successfully")
+        gemini_configured = True
+    except Exception as e:
+        print(f"❌ Error configuring Gemini API: {str(e)}")
+        gemini_configured = False
 
 # Global variable to store the master data
 master_data = None
 
-# Load the master JSON file robustly
-MASTER_JSON_PATH = os.path.join(os.path.dirname(__file__), 'courier_rates_master.json')
-with open(MASTER_JSON_PATH, 'r', encoding='utf-8') as f:
-    master_data = json.load(f)
-
 def load_master_json():
-    """Load the master JSON file once at startup"""
+    """Load the master JSON file with enhanced error handling"""
     global master_data
     try:
-        with open('courier_rates_master.json', 'r', encoding='utf-8') as f:
-            master_data = json.load(f)
-        print("✅ Master JSON loaded successfully!")
-        print(f"📊 Loaded {len(master_data.get('carriers', {}))} carriers")
-        return True
+        # Try multiple possible paths
+        possible_paths = [
+            'courier_rates_master.json',
+            os.path.join(os.path.dirname(__file__), 'courier_rates_master.json'),
+            os.path.join(os.getcwd(), 'courier_rates_master.json')
+        ]
+        
+        for json_path in possible_paths:
+            if os.path.exists(json_path):
+                print(f"📁 Found master JSON at: {json_path}")
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    master_data = json.load(f)
+                print("✅ Master JSON loaded successfully!")
+                print(f"📊 Loaded {len(master_data.get('carriers', {}))} carriers")
+                return True
+        
+        print("❌ courier_rates_master.json not found in any expected location")
+        return False
+        
+    except json.JSONDecodeError as e:
+        print(f"❌ Error parsing master JSON: {e}")
+        return False
     except Exception as e:
         print(f"❌ Error loading master JSON: {e}")
         return False
+
+# Initialize master data
+load_master_json()
 
 def get_relevant_data_for_country(country):
     """Extract relevant data subset for the country to send to Gemini"""
@@ -144,6 +190,9 @@ def expand_country_zones(country, relevant_data):
 
 def ask_gemini_for_comprehensive_search(country, weight, relevant_data):
     """Use Gemini to find all possible rate options for the country"""
+    
+    if not gemini_configured:
+        return {"error": "Gemini API not configured", "matches_found": [], "total_carriers_found": 0}
     
     prompt = f"""
 You are a shipping rate analysis expert. I need you to find ALL possible shipping rates for:
@@ -274,7 +323,24 @@ def get_rates():
         return jsonify({'status': 'ok'}), 200
     
     try:
+        # Check if master data is loaded
+        if not master_data:
+            return jsonify({
+                'error': 'Server configuration error: Master shipping data not loaded. Please contact administrator.',
+                'details': 'courier_rates_master.json file is missing or invalid'
+            }), 500
+        
+        # Check if Gemini is configured
+        if not gemini_configured:
+            return jsonify({
+                'error': 'Server configuration error: AI service not available. Please contact administrator.',
+                'details': 'Gemini API key not configured'
+            }), 500
+        
         data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Invalid JSON data'}), 400
+            
         country = data.get('country', '').strip()
         weight = data.get('weight', 0)
         
@@ -333,6 +399,7 @@ def get_rates():
         print("=== DEBUG: rate_results ===")
         for r in rate_results:
             print(f"Carrier: {r['carrier']}, Service: {r['service_type']}, Matched: {r['matched_country']}, Rate: {r['rate']}")
+        
         # Step 5: Format response for frontend
         response = {
             'country': country,
@@ -357,6 +424,7 @@ def get_rates():
         
     except Exception as e:
         print(f"❌ Server error: {e}")
+        print(f"❌ Traceback: {traceback.format_exc()}")
         return jsonify({'error': f'Server error: {str(e)}'}), 500
 
 @app.route('/api/carriers', methods=['GET'])
@@ -371,12 +439,13 @@ def get_carriers():
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    status = "healthy" if master_data else "unhealthy"
+    status = "healthy" if master_data and gemini_configured else "unhealthy"
     return jsonify({
         'status': status,
         'master_data_loaded': master_data is not None,
         'carriers_count': len(master_data.get('carriers', {})) if master_data else 0,
-        'gemini_configured': bool(os.getenv('GEMINI_API_KEY'))
+        'gemini_configured': gemini_configured,
+        'gemini_api_key_present': bool(gemini_api_key)
     })
 
 @app.route('/')
@@ -763,13 +832,15 @@ if __name__ == '__main__':
     print("🏢 Starting Majithia International Courier Rate Finder...")
     print("✨ Professional shipping rate calculator with AI intelligence")
     
-    if not os.getenv('GEMINI_API_KEY'):
+    if not gemini_api_key:
         print("⚠️  Warning: GEMINI_API_KEY not found in environment variables")
         print("   Please add your Gemini API key to .env file")
     
-    if load_master_json():
+    if master_data:
         print("✅ Ready to serve professional rate requests!")
         print("🌐 Access your app at: http://localhost:5000")
         app.run(debug=True, host='0.0.0.0', port=5000)
     else:
-        print("❌ Failed to load master data. Exiting...")
+        print("❌ Master data not loaded. Starting server anyway for debugging...")
+        print("🌐 Access your app at: http://localhost:5000")
+        app.run(debug=True, host='0.0.0.0', port=5000)
