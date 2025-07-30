@@ -10,38 +10,18 @@ from dotenv import load_dotenv
 load_dotenv()
 app = Flask(__name__)
 
-# Enhanced CORS configuration
+# Simplified CORS configuration
 CORS(app, 
      origins=[
-         "http://localhost:8080",
          "https://keshavmajithia.github.io",
-         "http://localhost:3000",  # Added for local development
-         "http://127.0.0.1:8080",
-         "http://127.0.0.1:3000"
+         "http://localhost:3000",
+         "http://localhost:8080",
+         "http://127.0.0.1:3000",
+         "http://127.0.0.1:8080"
      ], 
-     allow_headers=["Content-Type", "Authorization", "Access-Control-Allow-Credentials"],
      methods=["GET", "POST", "OPTIONS"],
+     allow_headers=["Content-Type", "Authorization"],
      supports_credentials=True)
-
-# Add manual CORS headers for better compatibility
-@app.after_request
-def after_request(response):
-    origin = request.headers.get('Origin')
-    allowed_origins = [
-        "http://localhost:8080",
-        "https://keshavmajithia.github.io", 
-        "http://localhost:3000",
-        "http://127.0.0.1:8080",
-        "http://127.0.0.1:3000"
-    ]
-    
-    if origin in allowed_origins:
-        response.headers.add('Access-Control-Allow-Origin', origin)
-    
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
-    return response
 
 # Configure Gemini with better error handling
 gemini_api_key = os.getenv('VITE_GEMINI_API_KEY') or os.getenv('GEMINI_API_KEY')
@@ -67,13 +47,15 @@ def load_master_json():
     """Load the master JSON file with enhanced error handling"""
     global master_data
     try:
-        # Try multiple possible paths
+        # Try multiple possible paths, prioritizing production path
         possible_paths = [
+            '/app/courier_rates_master.json',  # For Google Cloud Run
             'courier_rates_master.json',
             os.path.join(os.path.dirname(__file__), 'courier_rates_master.json'),
             os.path.join(os.getcwd(), 'courier_rates_master.json')
         ]
         
+        print(f"🔍 Checking paths for master JSON: {possible_paths}")
         for json_path in possible_paths:
             if os.path.exists(json_path):
                 print(f"📁 Found master JSON at: {json_path}")
@@ -82,6 +64,8 @@ def load_master_json():
                 print("✅ Master JSON loaded successfully!")
                 print(f"📊 Loaded {len(master_data.get('carriers', {}))} carriers")
                 return True
+            else:
+                print(f"⚠️ Path not found: {json_path}")
         
         print("❌ courier_rates_master.json not found in any expected location")
         return False
@@ -243,7 +227,7 @@ Be thorough and don't miss any carriers that could serve {country}!
         
         return json.loads(response_text)
     except Exception as e:
-        print(f"Gemini error: {e}")
+        print(f"❌ Gemini error: {str(e)}")
         return {"error": str(e), "matches_found": [], "total_carriers_found": 0}
 
 def get_actual_rates_from_matches(matches, weight):
@@ -311,7 +295,7 @@ def get_actual_rates_from_matches(matches, weight):
                     results.append(result)
                     
         except Exception as e:
-            print(f"Error processing match {match}: {e}")
+            print(f"❌ Error processing match {match}: {e}")
             continue
     
     return results
@@ -320,24 +304,14 @@ def get_actual_rates_from_matches(matches, weight):
 def get_rates():
     """API endpoint to get rates for country and weight using Gemini intelligence"""
     if request.method == 'OPTIONS':
+        print("📥 Handling OPTIONS request")
         return jsonify({'status': 'ok'}), 200
     
     try:
-        # Check if master data is loaded
-        if not master_data:
-            return jsonify({
-                'error': 'Server configuration error: Master shipping data not loaded. Please contact administrator.',
-                'details': 'courier_rates_master.json file is missing or invalid'
-            }), 500
-        
-        # Check if Gemini is configured
-        if not gemini_configured:
-            return jsonify({
-                'error': 'Server configuration error: AI service not available. Please contact administrator.',
-                'details': 'Gemini API key not configured'
-            }), 500
-        
+        print(f"📥 Request received from origin: {request.headers.get('Origin')}")
         data = request.get_json()
+        print(f"📥 Request data: {data}")
+        
         if not data:
             return jsonify({'error': 'Invalid JSON data'}), 400
             
@@ -350,20 +324,30 @@ def get_rates():
         if not weight or float(weight) <= 0:
             return jsonify({'error': 'Valid weight is required'}), 400
         
-        # Validate weight increment (must be 0.5kg steps)
         is_valid, error_msg = validate_weight_input(weight)
         if not is_valid:
             return jsonify({'error': error_msg}), 400
         
+        if not master_data:
+            print("❌ Master data not loaded")
+            return jsonify({
+                'error': 'Master shipping data not loaded',
+                'details': 'courier_rates_master.json file is missing or invalid'
+            }), 500
+        
+        if not gemini_configured:
+            print("❌ Gemini API not configured")
+            return jsonify({
+                'error': 'AI service not available',
+                'details': 'Gemini API key not configured'
+            }), 500
+        
         print(f"🔍 Searching rates for {country}, {weight}kg...")
-        
-        # Step 1: Get relevant data subset for the country (including sub-zones)
         relevant_data = get_relevant_data_for_country(country)
-        
-        # Expand to include sub-zones
         expanded_locations = expand_country_zones(country, relevant_data)
         
         if not relevant_data.get('carriers'):
+            print(f"⚠️ No shipping data found for {country}")
             return jsonify({
                 'error': f'No shipping data found for {country}',
                 'country': country,
@@ -371,36 +355,31 @@ def get_rates():
             }), 404
         
         print(f"📊 Found relevant data for {len(relevant_data['carriers'])} carriers")
-        
-        # Step 2: Use Gemini to comprehensively analyze the data
         gemini_analysis = ask_gemini_for_comprehensive_search(country, weight, relevant_data)
         
         if 'error' in gemini_analysis:
+            print(f"❌ Gemini analysis error: {gemini_analysis['error']}")
             return jsonify({'error': f'Analysis error: {gemini_analysis["error"]}'}), 500
         
         print(f"🤖 Gemini found {gemini_analysis.get('total_carriers_found', 0)} potential matches")
         print(f"📋 Gemini matches: {json.dumps(gemini_analysis.get('matches_found', []), indent=2)}")
         
-        # Step 3: Get actual rates from the matches
         rate_results = get_actual_rates_from_matches(gemini_analysis.get('matches_found', []), weight)
         
-        # Step 4: Get zone mappings for display
         zone_mappings = {}
         for carrier_name in ['fedex', 'dhl', 'ups']:
             zone_mapping = master_data.get('zone_mappings', {}).get(carrier_name, {})
             country_upper = country.upper()
-            
             for mapped_country, zone in zone_mapping.items():
                 if country_upper in mapped_country or mapped_country in country_upper:
                     zone_mappings[f'{carrier_name}_zone'] = zone
                     break
         
-        # Diagnostic print to check service_type in backend response
         print("=== DEBUG: rate_results ===")
         for r in rate_results:
             print(f"Carrier: {r['carrier']}, Service: {r['service_type']}, Matched: {r['matched_country']}, Rate: {r['rate']}")
         
-        # Step 5: Format response for frontend
+        print(f"✅ Returning {len(rate_results)} rate results")
         response = {
             'country': country,
             'weight': weight,
@@ -416,14 +395,10 @@ def get_rates():
                 }
             }
         }
-        
-        print(f"✅ Returning {len(rate_results)} rate results")
-        if len(rate_results) < gemini_analysis.get('total_carriers_found', 0):
-            print(f"⚠️  Warning: Only {len(rate_results)} rates extracted from {gemini_analysis.get('total_carriers_found', 0)} Gemini matches")
         return jsonify(response)
         
     except Exception as e:
-        print(f"❌ Server error: {e}")
+        print(f"❌ Server error: {str(e)}")
         print(f"❌ Traceback: {traceback.format_exc()}")
         return jsonify({'error': f'Server error: {str(e)}'}), 500
 
@@ -431,6 +406,7 @@ def get_rates():
 def get_carriers():
     """Get list of all available carriers"""
     if not master_data:
+        print("❌ Master data not loaded for /api/carriers")
         return jsonify({'error': 'Master data not loaded'}), 500
     
     carriers = list(master_data.get('carriers', {}).keys())
@@ -773,7 +749,6 @@ def index():
                             html += `<div class="analysis"><strong>🤖 AI Analysis:</strong> ${geminiData.analysis}</div>`;
                         }
                         
-                        // Sort by final rate (cheapest first)
                         geminiData.results.sort((a, b) => a.final_rate - b.final_rate);
                         
                         geminiData.results.forEach((rate, index) => {
@@ -814,14 +789,12 @@ def index():
                 }
             }
             
-            // Allow Enter key to trigger search
             document.addEventListener('keypress', function(e) {
                 if (e.key === 'Enter') {
                     findRates();
                 }
             });
             
-            // Initialize display
             updateWeightDisplay();
         </script>
     </body>
