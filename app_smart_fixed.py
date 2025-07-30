@@ -10,24 +10,36 @@ from dotenv import load_dotenv
 load_dotenv()
 app = Flask(__name__)
 
+# Load configuration from environment variables
+app.config.update(
+    GEMINI_API_KEY=os.getenv('GEMINI_API_KEY'),
+    SUPABASE_URL=os.getenv('VITE_SUPABASE_URL'),
+    SUPABASE_KEY=os.getenv('VITE_SUPABASE_ANON_KEY'),
+    DEBUG=os.getenv('NODE_ENV') != 'production'
+)
+
 # Enhanced CORS configuration
-CORS(app, 
-     resources={
-         r"/api/*": {
-             "origins": [
-                 "https://keshavmajithia.github.io",
-                 "http://localhost:3000",
-                 "http://localhost:8080",
-                 "http://127.0.0.1:3000",
-                 "http://127.0.0.1:8080"
-             ],
-             "methods": ["GET", "POST", "OPTIONS"],
-             "allow_headers": ["Content-Type", "Authorization"],
-             "supports_credentials": True,
-             "expose_headers": ["Content-Type", "Authorization"],
-             "max_age": 600
-         }
-     })
+app.config['CORS_SUPPORTS_CREDENTIALS'] = True
+app.config['CORS_ORIGINS'] = [
+    "https://keshavmajithia.github.io",
+    "http://localhost:3000",
+    "http://localhost:8080",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:8080"
+]
+
+# Configure CORS with explicit settings
+cors = CORS(app, 
+    resources={
+        r"/api/*": {
+            "origins": app.config['CORS_ORIGINS'],
+            "methods": ["GET", "POST", "OPTIONS", "PUT", "DELETE"],
+            "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+            "supports_credentials": True,
+            "expose_headers": ["Content-Type", "Authorization"],
+            "max_age": 600
+        }
+    })
 
 # Add CORS headers to all responses
 @app.after_request
@@ -35,39 +47,32 @@ def after_request(response):
     # Get the origin from the request
     origin = request.headers.get('Origin')
     
-    # List of allowed origins
-    allowed_origins = [
-        "https://keshavmajithia.github.io",
-        "http://localhost:3000",
-        "http://localhost:8080",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:8080"
-    ]
-    
     # If the request's origin is in our allowed list, add CORS headers
-    if origin in allowed_origins:
+    if origin in app.config['CORS_ORIGINS']:
         response.headers.add('Access-Control-Allow-Origin', origin)
         response.headers.add('Access-Control-Allow-Credentials', 'true')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+        response.headers.add('Access-Control-Expose-Headers', 'Content-Type, Authorization')
         response.headers.add('Access-Control-Max-Age', '600')
     
     # For preflight requests, respond with 200 OK
     if request.method == 'OPTIONS':
+        response.headers.add('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers', ''))
+        response.headers.add('Access-Control-Allow-Methods', request.headers.get('Access-Control-Request-Method', ''))
         return response, 200
         
     return response
 
 # Configure Gemini with better error handling
-gemini_api_key = os.getenv('VITE_GEMINI_API_KEY') or os.getenv('GEMINI_API_KEY')
 gemini_configured = False
 
-if not gemini_api_key:
+if not app.config['GEMINI_API_KEY']:
     print("⚠️  Warning: GEMINI_API_KEY not found in environment variables")
-    print("   Please add your Gemini API key to .env file as VITE_GEMINI_API_KEY or GEMINI_API_KEY")
+    print("   Please add your Gemini API key to .env file as GEMINI_API_KEY")
 else:
     try:
-        genai.configure(api_key=gemini_api_key)
+        genai.configure(api_key=app.config['GEMINI_API_KEY'])
         model = genai.GenerativeModel('gemini-1.5-flash')
         print("✅ Gemini API configured successfully")
         gemini_configured = True
