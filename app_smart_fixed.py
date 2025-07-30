@@ -7,12 +7,11 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-
 app = Flask(__name__)
 CORS(app, origins=[
     "http://localhost:8080",
     "https://keshavmajithia.github.io"
-])
+], allow_headers=["Content-Type"], methods=["GET", "POST"])
 
 # Configure Gemini
 # Try VITE_GEMINI_API_KEY first (for frontend), fall back to GEMINI_API_KEY
