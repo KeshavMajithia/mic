@@ -13,6 +13,15 @@ app = Flask(__name__)
 # Simple CORS configuration that WILL work
 CORS(app, origins="*", methods=["GET", "POST", "OPTIONS"], allow_headers="*")
 
+# Additional CORS handler to ensure headers are ALWAYS added
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'false')
+    return response
+
 # Configure Gemini with better error handling
 gemini_api_key = os.getenv('VITE_GEMINI_API_KEY') or os.getenv('GEMINI_API_KEY')
 gemini_configured = False
@@ -72,7 +81,7 @@ load_master_json()
 
 def add_cors_headers(response):
     """Add CORS headers to response"""
-    response.headers.add('Access-Control-Allow-Origin', 'https://keshavmajithia.github.io')
+    response.headers.add('Access-Control-Allow-Origin', '*')
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
     response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
     return response
