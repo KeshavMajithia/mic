@@ -18,42 +18,31 @@ app.config.update(
     DEBUG=os.getenv('NODE_ENV') != 'production'
 )
 
-# Configure CORS to allow all origins in development
+# Improved CORS configuration
 if os.getenv('NODE_ENV') == 'development':
-    @app.after_request
-    def add_cors_headers(response):
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-        response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-        response.headers.add('Access-Control-Allow-Credentials', 'true')
-        return response
+    # Development CORS - allow all origins
+    CORS(app, 
+         origins=['*'],
+         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+         allow_headers=['Content-Type', 'Authorization', 'X-Requested-With'],
+         supports_credentials=False)  # No credentials in dev
 else:
     # Production CORS configuration
     allowed_origins = [
         "https://keshavmajithia.github.io",
-        "https://*.github.io"  # Allow all GitHub Pages subdomains
+        "https://keshavmajithia.github.io/",
+        # Add your exact GitHub Pages URL here
     ]
     
-    @app.after_request
-    def add_cors_headers(response):
-        origin = request.headers.get('Origin')
-        if origin and any(origin.startswith(allowed.replace('*', '')) for allowed in allowed_origins):
-            response.headers.add('Access-Control-Allow-Origin', origin)
-            response.headers.add('Access-Control-Allow-Credentials', 'true')
-            response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
-            response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
-            response.headers.add('Access-Control-Max-Age', '600')
-        return response
+    CORS(app, 
+         origins=allowed_origins,
+         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+         allow_headers=['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+         supports_credentials=True,
+         max_age=600)
 
-# Handle OPTIONS method for CORS preflight
-@app.route('/api/<path:path>', methods=['OPTIONS'])
-def options_handler(path):
-    response = jsonify({'status': 'ok'})
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
-    return response
+# Remove the manual CORS headers since we're using flask-cors
+# The flask-cors extension will handle all CORS headers automatically
 
 # Configure Gemini with better error handling
 try:
@@ -331,13 +320,9 @@ def get_actual_rates_from_matches(matches, weight):
     
     return results
 
-@app.route('/api/get-rates', methods=['POST', 'OPTIONS'])
+@app.route('/api/get-rates', methods=['POST'])
 def get_rates():
     """API endpoint to get rates for country and weight using Gemini intelligence"""
-    if request.method == 'OPTIONS':
-        print("📥 Handling OPTIONS request")
-        return jsonify({'status': 'ok'}), 200
-    
     try:
         print(f"📥 Request received from origin: {request.headers.get('Origin')}")
         data = request.get_json()
