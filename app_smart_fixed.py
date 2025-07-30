@@ -10,18 +10,53 @@ from dotenv import load_dotenv
 load_dotenv()
 app = Flask(__name__)
 
-# Simplified CORS configuration
+# Enhanced CORS configuration
 CORS(app, 
-     origins=[
-         "https://keshavmajithia.github.io",
-         "http://localhost:3000",
-         "http://localhost:8080",
-         "http://127.0.0.1:3000",
-         "http://127.0.0.1:8080"
-     ], 
-     methods=["GET", "POST", "OPTIONS"],
-     allow_headers=["Content-Type", "Authorization"],
-     supports_credentials=True)
+     resources={
+         r"/api/*": {
+             "origins": [
+                 "https://keshavmajithia.github.io",
+                 "http://localhost:3000",
+                 "http://localhost:8080",
+                 "http://127.0.0.1:3000",
+                 "http://127.0.0.1:8080"
+             ],
+             "methods": ["GET", "POST", "OPTIONS"],
+             "allow_headers": ["Content-Type", "Authorization"],
+             "supports_credentials": True,
+             "expose_headers": ["Content-Type", "Authorization"],
+             "max_age": 600
+         }
+     })
+
+# Add CORS headers to all responses
+@app.after_request
+def after_request(response):
+    # Get the origin from the request
+    origin = request.headers.get('Origin')
+    
+    # List of allowed origins
+    allowed_origins = [
+        "https://keshavmajithia.github.io",
+        "http://localhost:3000",
+        "http://localhost:8080",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8080"
+    ]
+    
+    # If the request's origin is in our allowed list, add CORS headers
+    if origin in allowed_origins:
+        response.headers.add('Access-Control-Allow-Origin', origin)
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        response.headers.add('Access-Control-Max-Age', '600')
+    
+    # For preflight requests, respond with 200 OK
+    if request.method == 'OPTIONS':
+        return response, 200
+        
+    return response
 
 # Configure Gemini with better error handling
 gemini_api_key = os.getenv('VITE_GEMINI_API_KEY') or os.getenv('GEMINI_API_KEY')
