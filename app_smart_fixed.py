@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 app = Flask(__name__)
 
-# Simplified CORS configuration
+# Enhanced CORS configuration
 CORS(app, 
      origins=[
          "https://keshavmajithia.github.io",
@@ -20,8 +20,9 @@ CORS(app,
          "http://127.0.0.1:8080"
      ], 
      methods=["GET", "POST", "OPTIONS"],
-     allow_headers=["Content-Type", "Authorization"],
-     supports_credentials=True)
+     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+     supports_credentials=False,
+     send_wildcard=False)
 
 # Configure Gemini with better error handling
 gemini_api_key = os.getenv('VITE_GEMINI_API_KEY') or os.getenv('GEMINI_API_KEY')
@@ -79,6 +80,13 @@ def load_master_json():
 
 # Initialize master data
 load_master_json()
+
+def add_cors_headers(response):
+    """Add CORS headers to response"""
+    response.headers.add('Access-Control-Allow-Origin', 'https://keshavmajithia.github.io')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
+    response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+    return response
 
 def get_relevant_data_for_country(country):
     """Extract relevant data subset for the country to send to Gemini"""
@@ -305,7 +313,7 @@ def get_rates():
     """API endpoint to get rates for country and weight using Gemini intelligence"""
     if request.method == 'OPTIONS':
         print("📥 Handling OPTIONS request")
-        return jsonify({'status': 'ok'}), 200
+        return add_cors_headers(jsonify({'status': 'ok'})), 200
     
     try:
         print(f"📥 Request received from origin: {request.headers.get('Origin')}")
@@ -313,34 +321,34 @@ def get_rates():
         print(f"📥 Request data: {data}")
         
         if not data:
-            return jsonify({'error': 'Invalid JSON data'}), 400
+            return add_cors_headers(jsonify({'error': 'Invalid JSON data'})), 400
             
         country = data.get('country', '').strip()
         weight = data.get('weight', 0)
         
         if not country:
-            return jsonify({'error': 'Country is required'}), 400
+            return add_cors_headers(jsonify({'error': 'Country is required'})), 400
         
         if not weight or float(weight) <= 0:
-            return jsonify({'error': 'Valid weight is required'}), 400
+            return add_cors_headers(jsonify({'error': 'Valid weight is required'})), 400
         
         is_valid, error_msg = validate_weight_input(weight)
         if not is_valid:
-            return jsonify({'error': error_msg}), 400
+            return add_cors_headers(jsonify({'error': error_msg})), 400
         
         if not master_data:
             print("❌ Master data not loaded")
-            return jsonify({
+            return add_cors_headers(jsonify({
                 'error': 'Master shipping data not loaded',
                 'details': 'courier_rates_master.json file is missing or invalid'
-            }), 500
+            })), 500
         
         if not gemini_configured:
             print("❌ Gemini API not configured")
-            return jsonify({
+            return add_cors_headers(jsonify({
                 'error': 'AI service not available',
                 'details': 'Gemini API key not configured'
-            }), 500
+            })), 500
         
         print(f"🔍 Searching rates for {country}, {weight}kg...")
         relevant_data = get_relevant_data_for_country(country)
@@ -395,12 +403,12 @@ def get_rates():
                 }
             }
         }
-        return jsonify(response)
+        return add_cors_headers(jsonify(response))
         
     except Exception as e:
         print(f"❌ Server error: {str(e)}")
         print(f"❌ Traceback: {traceback.format_exc()}")
-        return jsonify({'error': f'Server error: {str(e)}'}), 500
+        return add_cors_headers(jsonify({'error': f'Server error: {str(e)}'})), 500
 
 @app.route('/api/carriers', methods=['GET'])
 def get_carriers():
