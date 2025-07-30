@@ -10,55 +10,35 @@ from dotenv import load_dotenv
 load_dotenv()
 app = Flask(__name__)
 
-# Load configuration from environment variables
-app.config.update(
-    GEMINI_API_KEY=os.getenv('GEMINI_API_KEY'),
-    SUPABASE_URL=os.getenv('VITE_SUPABASE_URL'),
-    SUPABASE_KEY=os.getenv('VITE_SUPABASE_ANON_KEY'),
-    DEBUG=os.getenv('NODE_ENV') != 'production'
-)
-
-# Improved CORS configuration
-if os.getenv('NODE_ENV') == 'development':
-    # Development CORS - allow all origins
-    CORS(app, 
-         origins=['*'],
-         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-         allow_headers=['Content-Type', 'Authorization', 'X-Requested-With'],
-         supports_credentials=False)  # No credentials in dev
-else:
-    # Production CORS configuration
-    allowed_origins = [
-        "https://keshavmajithia.github.io",
-        "https://keshavmajithia.github.io/",
-        # Add your exact GitHub Pages URL here
-    ]
-    
-    CORS(app, 
-         origins=allowed_origins,
-         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-         allow_headers=['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
-         supports_credentials=True,
-         max_age=600)
-
-# Remove the manual CORS headers since we're using flask-cors
-# The flask-cors extension will handle all CORS headers automatically
+# Simplified CORS configuration
+CORS(app, 
+     origins=[
+         "https://keshavmajithia.github.io",
+         "http://localhost:3000",
+         "http://localhost:8080",
+         "http://127.0.0.1:3000",
+         "http://127.0.0.1:8080"
+     ], 
+     methods=["GET", "POST", "OPTIONS"],
+     allow_headers=["Content-Type", "Authorization"],
+     supports_credentials=True)
 
 # Configure Gemini with better error handling
-try:
-    gemini_api_key = app.config.get('GEMINI_API_KEY') or os.getenv('GEMINI_API_KEY')
-    if not gemini_api_key:
-        print("⚠️  Warning: GEMINI_API_KEY not found in environment variables")
-        print("   Please add your Gemini API key to .env file as GEMINI_API_KEY")
-        gemini_configured = False
-    else:
+gemini_api_key = os.getenv('VITE_GEMINI_API_KEY') or os.getenv('GEMINI_API_KEY')
+gemini_configured = False
+
+if not gemini_api_key:
+    print("⚠️  Warning: GEMINI_API_KEY not found in environment variables")
+    print("   Please add your Gemini API key to .env file as VITE_GEMINI_API_KEY or GEMINI_API_KEY")
+else:
+    try:
         genai.configure(api_key=gemini_api_key)
         model = genai.GenerativeModel('gemini-1.5-flash')
         print("✅ Gemini API configured successfully")
         gemini_configured = True
-except Exception as e:
-    print(f"❌ Error configuring Gemini API: {str(e)}")
-    gemini_configured = False
+    except Exception as e:
+        print(f"❌ Error configuring Gemini API: {str(e)}")
+        gemini_configured = False
 
 # Global variable to store the master data
 master_data = None
@@ -320,9 +300,13 @@ def get_actual_rates_from_matches(matches, weight):
     
     return results
 
-@app.route('/api/get-rates', methods=['POST'])
+@app.route('/api/get-rates', methods=['POST', 'OPTIONS'])
 def get_rates():
     """API endpoint to get rates for country and weight using Gemini intelligence"""
+    if request.method == 'OPTIONS':
+        print("📥 Handling OPTIONS request")
+        return jsonify({'status': 'ok'}), 200
+    
     try:
         print(f"📥 Request received from origin: {request.headers.get('Origin')}")
         data = request.get_json()
