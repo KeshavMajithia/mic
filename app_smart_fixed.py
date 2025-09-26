@@ -52,7 +52,7 @@ class RateFinderService:
     def __init__(self):
         logger.info("✅ Rate finder service initialized")
     
-    def analyze_shipping_rates(self, country, weight, relevant_data):
+    def analyze_shipping_rates(self, country, weight, master_data):
         """Comprehensive search that finds ALL matches programmatically"""
         logger.info(f"🔍 Starting comprehensive search for {country} at {weight}kg")
         
@@ -60,8 +60,8 @@ class RateFinderService:
         country_upper = country.upper().strip()
         
         # Get carriers data
-        carriers = relevant_data.get('carriers', {})
-        zone_mappings = relevant_data.get('zone_mappings', {})
+        carriers = master_data.get('carriers', {})
+        zone_mappings = master_data.get('zone_mappings', {})
         
         # Debug: Log what we're searching for
         logger.info(f"🔎 Searching for: '{country}' (normalized: '{country_upper}')")
@@ -110,7 +110,8 @@ class RateFinderService:
                             "location_key": location_key,
                             "match_type": "direct_country",
                             "match_reason": match_reason,
-                            "weight_available": weight_valid
+                            "weight_available": weight_valid,
+                            "rate_data": rate_data  # Include actual rate data
                         })
                         logger.info(f"✅ Direct match ({match_reason}): {carrier_name} {service_name} -> {location_key} (weight_valid={weight_valid})")
         
@@ -193,7 +194,8 @@ class RateFinderService:
                                     "match_type": "zone_based",
                                     "zone": country_zone,
                                     "zone_country": matched_zone_country,
-                                    "weight_available": weight_valid
+                                    "weight_available": weight_valid,
+                                    "rate_data": rate_data  # Include actual rate data
                                 })
                                 logger.info(f"✅ Added zone match: {carrier_name} {service_name} -> {location_key} (weight_valid={weight_valid})")
                         
@@ -262,7 +264,8 @@ class RateFinderService:
             'CYPRUS': ['EUROPE'],  # Cyprus might be under Europe
             'RUSSIA': ['RUSSIAN FEDERATION'],
             'SOUTH KOREA': ['KOREA'],
-            'NORTH KOREA': ['KOREA']
+            'NORTH KOREA': ['KOREA'],
+            'CANADA': ['CAN']
         }
         
         # Check if country has known variations
@@ -282,7 +285,7 @@ class RateFinderService:
 # Initialize rate finder service
 rate_finder_service = RateFinderService()
 
-# Data management
+# Data management - FIXED VERSION
 class DataManager:
     def __init__(self):
         self.master_data = None
@@ -314,57 +317,11 @@ class DataManager:
         except Exception as e:
             logger.error(f"❌ Error loading master JSON: {e}")
             return False
-    
-    @lru_cache(maxsize=128)
-    def get_relevant_data_for_country(self, country):
-        """Cached method to get relevant data for country"""
-        if not self.master_data:
-            return {}
-        
-        relevant_data = {
-            "carriers": {},
-            "zone_mappings": self.master_data.get("zone_mappings", {})
-        }
-        
-        country_upper = country.upper()
-        carriers = self.master_data.get('carriers', {})
-        
-        for carrier_name, carrier_data in carriers.items():
-            services = carrier_data.get('services', {})
-            relevant_services = {}
-            
-            for service_name, service_data in services.items():
-                has_country_data = False
-                service_subset = {}
-                
-                # Check direct country matches
-                for location_key in service_data.keys():
-                    if country_upper in location_key.upper() or location_key.upper() in country_upper:
-                        has_country_data = True
-                        service_subset[location_key] = list(service_data[location_key].keys())
-                
-                # Check zone-based matches
-                for zone_carrier, zone_mapping in relevant_data["zone_mappings"].items():
-                    if zone_carrier.lower() == carrier_name.lower():
-                        for mapped_country, zone in zone_mapping.items():
-                            if country_upper in mapped_country or mapped_country in country_upper:
-                                zone_key = f"ZONE {zone}" if not str(zone).startswith("ZONE") else str(zone)
-                                if zone_key in service_data:
-                                    has_country_data = True
-                                    service_subset[zone_key] = list(service_data[zone_key].keys())
-                
-                if has_country_data:
-                    relevant_services[service_name] = service_subset
-            
-            if relevant_services:
-                relevant_data["carriers"][carrier_name] = {"services": relevant_services}
-        
-        return relevant_data
 
 # Initialize data manager
 data_manager = DataManager()
 
-# Utility functions
+# FIXED Utility functions
 class RateCalculator:
     @staticmethod
     def validate_weight_input(weight):
@@ -392,8 +349,8 @@ class RateCalculator:
         return None
     
     @staticmethod
-    def get_actual_rates_from_matches(matches, weight, master_data):
-        """Process matches to get actual rates"""
+    def get_actual_rates_from_matches(matches, weight):
+        """Process matches to get actual rates - FIXED VERSION"""
         results = []
         
         for match in matches:
@@ -401,59 +358,43 @@ class RateCalculator:
                 carrier = match['carrier']
                 service = match['service']
                 location_key = match['location_key']
+                rate_data = match.get('rate_data', {})  # Get rate data from match
                 
-                service_data = master_data['carriers'][carrier]['services'][service]
-                
-                if match['match_type'] == 'zone_based' and match.get('zone'):
-                    zone = match['zone']
-                    actual_location_key = f"ZONE {zone}" if not str(zone).startswith("ZONE") else str(zone)
-                    actual_location_key = actual_location_key.upper()  # Normalize to match JSON
-                else:
-                    actual_location_key = location_key  # Use original case first
-                
-                # Try original location_key first, then uppercase
-                weight_data = None
-                if actual_location_key in service_data:
-                    weight_data = service_data[actual_location_key]
-                elif actual_location_key.upper() in service_data:
-                    weight_data = service_data[actual_location_key.upper()]
-                elif actual_location_key.lower() in service_data:
-                    weight_data = service_data[actual_location_key.lower()]
-                else:
-                    logger.error(f"Location key {actual_location_key} not found in service_data: {list(service_data.keys())}")
+                if not rate_data:
+                    logger.error(f"No rate data found for {carrier} {service} {location_key}")
                     results.append({
                         'carrier': carrier,
-                        'service_type': RateCalculator._format_service_name(service, location_key, actual_location_key),
+                        'service_type': RateCalculator._format_service_name(service, location_key, location_key),
                         'rate': 'N/A',
                         'currency': 'N/A',
                         'zone': match.get('zone', ''),
-                        'calculation': 'No valid rate data found',
-                        'matched_country': RateCalculator._format_matched_country(location_key, actual_location_key),
+                        'calculation': 'No rate data available',
+                        'matched_country': location_key,
                         'weight_tier': 'N/A',
                         'match_type': match['match_type'],
-                        'reasoning': f"Location key {actual_location_key} not found",
+                        'reasoning': 'No rate data found in match',
                         'final_rate': 0
                     })
                     continue
                 
-                available_weights = list(weight_data.keys())
+                available_weights = list(rate_data.keys())
                 best_weight = RateCalculator.find_best_weight_match(weight, available_weights)
                 
-                if best_weight and best_weight in weight_data:
-                    rate_info = weight_data[best_weight]
+                if best_weight and best_weight in rate_data:
+                    rate_info = rate_data[best_weight]
                     
                     # Create result object
                     result = {
                         'carrier': carrier,
-                        'service_type': RateCalculator._format_service_name(service, location_key, actual_location_key),
+                        'service_type': RateCalculator._format_service_name(service, location_key, location_key),
                         'rate': f"₹{rate_info['rate']}",
                         'currency': rate_info.get('currency', 'INR'),
                         'zone': match.get('zone', ''),
                         'calculation': f"₹{rate_info['rate']} for {best_weight}kg tier",
-                        'matched_country': RateCalculator._format_matched_country(location_key, actual_location_key),
+                        'matched_country': RateCalculator._format_matched_country(location_key, location_key),
                         'weight_tier': best_weight,
                         'match_type': match['match_type'],
-                        'reasoning': match.get('reasoning', ''),
+                        'reasoning': match.get('match_reason', ''),
                         'final_rate': rate_info['rate']
                     }
                     
@@ -465,16 +406,17 @@ class RateCalculator:
                         result['calculation'] = f"₹{rate_info['rate']}/kg × {weight}kg = ₹{final_rate}"
                     
                     results.append(result)
+                    logger.info(f"✅ Processed rate: {carrier} {service} -> ₹{rate_info['rate']} for {best_weight}kg")
                 else:
-                    logger.error(f"No valid weight tier found for {carrier} {service} {actual_location_key}. Available weights: {available_weights}")
+                    logger.error(f"No valid weight tier found for {carrier} {service} {location_key}. Available weights: {available_weights}")
                     results.append({
                         'carrier': carrier,
-                        'service_type': RateCalculator._format_service_name(service, location_key, actual_location_key),
+                        'service_type': RateCalculator._format_service_name(service, location_key, location_key),
                         'rate': 'N/A',
                         'currency': 'N/A',
                         'zone': match.get('zone', ''),
                         'calculation': f"No valid weight tier for {weight}kg",
-                        'matched_country': RateCalculator._format_matched_country(location_key, actual_location_key),
+                        'matched_country': RateCalculator._format_matched_country(location_key, location_key),
                         'weight_tier': 'N/A',
                         'match_type': match['match_type'],
                         'reasoning': f"No valid weight tier found. Available weights: {available_weights}",
@@ -484,15 +426,15 @@ class RateCalculator:
             except Exception as e:
                 logger.error(f"❌ Error processing match {match}: {e}")
                 results.append({
-                    'carrier': carrier,
-                    'service_type': RateCalculator._format_service_name(service, location_key, actual_location_key),
+                    'carrier': match.get('carrier', 'Unknown'),
+                    'service_type': match.get('service', 'Unknown'),
                     'rate': 'N/A',
                     'currency': 'N/A',
                     'zone': match.get('zone', ''),
                     'calculation': 'Error processing rate data',
-                    'matched_country': RateCalculator._format_matched_country(location_key, actual_location_key),
+                    'matched_country': match.get('location_key', 'Unknown'),
                     'weight_tier': 'N/A',
-                    'match_type': match['match_type'],
+                    'match_type': match.get('match_type', 'unknown'),
                     'reasoning': f"Error: {str(e)}",
                     'final_rate': 0
                 })
@@ -518,10 +460,10 @@ class RateCalculator:
             return f"{location_key} ({actual_location_key})"
         return location_key
 
-# API Routes
+# API Routes - FIXED VERSION
 @app.route('/api/get-rates', methods=['POST', 'OPTIONS'])
 def get_rates():
-    """Main API endpoint for getting shipping rates"""
+    """Main API endpoint for getting shipping rates - FIXED VERSION"""
     
     # Handle preflight OPTIONS request
     if request.method == 'OPTIONS':
@@ -561,38 +503,25 @@ def get_rates():
         
         logger.info(f"🔍 Processing request: {country}, {weight}kg")
         
-        # Get relevant data and analyze
-        relevant_data = data_manager.get_relevant_data_for_country(country)
-        
-        if not relevant_data.get('carriers'):
-            logger.warning(f"⚠️ No shipping data found for {country}")
-            return jsonify({
-                'error': f'No shipping data found for {country}',
-                'country': country,
-                'weight': weight
-            }), 404
-        
-        logger.info(f"📊 Found relevant data for {len(relevant_data['carriers'])} carriers")
-        
-        # Use smart rate finder for analysis (no Gemini)
-        analysis_result = rate_finder_service.analyze_shipping_rates(country, weight, relevant_data)
+        # Use smart rate finder for analysis - Pass master_data directly
+        analysis_result = rate_finder_service.analyze_shipping_rates(country, weight, data_manager.master_data)
         
         logger.info(f"🤖 Smart finder found {analysis_result.get('total_carriers_found', 0)} matches")
         
         # Get actual rates from matches
         rate_results = RateCalculator.get_actual_rates_from_matches(
             analysis_result.get('matches_found', []), 
-            weight, 
-            data_manager.master_data
+            weight
         )
         
         # Prepare zone mappings for response
         zone_mappings = {}
-        for carrier_name in ['fedex', 'dhl', 'ups']:
-            zone_mapping = data_manager.master_data.get('zone_mappings', {}).get(carrier_name, {})
+        zone_mappings_data = data_manager.master_data.get('zone_mappings', {})
+        for carrier_name in zone_mappings_data.keys():
+            zone_mapping = zone_mappings_data.get(carrier_name, {})
             country_upper = country.upper()
             for mapped_country, zone in zone_mapping.items():
-                if country_upper in mapped_country or mapped_country in country_upper:
+                if country_upper in mapped_country.upper() or mapped_country.upper() in country_upper:
                     zone_mappings[f'{carrier_name}_zone'] = zone
                     break
         
@@ -885,7 +814,7 @@ def index():
             <div class="header">
                 <h1>Majithia International Courier</h1>
                 <div class="subtitle">Professional International Shipping Rate Calculator</div>
-                <div class="smart-badge">Smart Rate Finder</div>
+                <div class="smart-badge">Smart Rate Finder - FIXED</div>
             </div>
             
             <div class="form-section">
@@ -952,6 +881,7 @@ def index():
                     });
                     
                     const data = await response.json();
+                    console.log('Response data:', data); // Debug log
                     
                     if (data.error) {
                         resultsDiv.innerHTML = `<div class="error">${data.error}</div>`;
@@ -970,13 +900,18 @@ def index():
                             html += `<div class="analysis"><strong>Smart Analysis:</strong> ${smartData.analysis}</div>`;
                         }
                         
-                        smartData.results.sort((a, b) => a.final_rate - b.final_rate);
+                        smartData.results.sort((a, b) => {
+                            // Sort by final_rate, handling N/A values
+                            const aRate = a.final_rate && a.final_rate !== 'N/A' ? parseFloat(a.final_rate) : 999999;
+                            const bRate = b.final_rate && b.final_rate !== 'N/A' ? parseFloat(b.final_rate) : 999999;
+                            return aRate - bRate;
+                        });
                         
                         smartData.results.forEach((rate, index) => {
-                            const rankBadge = index === 0 ? 'BEST RATE' : index === 1 ? '2nd Best' : index === 2 ? '3rd Best' : '';
+                            const rankBadge = rate.final_rate > 0 ? (index === 0 ? ' 🏆 BEST RATE' : index === 1 ? ' 🥈 2nd Best' : index === 2 ? ' 🥉 3rd Best' : '') : '';
                             html += `
                                 <div class="rate-card">
-                                    <div class="carrier-name">${rate.carrier} - ${rate.service_type} ${rankBadge}</div>
+                                    <div class="carrier-name">${rate.carrier} - ${rate.service_type}${rankBadge}</div>
                                     <div class="rate-details">
                                         <div class="detail-item">
                                             <strong>Rate:</strong> ${rate.rate}
@@ -1034,13 +969,15 @@ def internal_error(error):
 
 if __name__ == '__main__':
     print("Starting Majithia International Courier Rate Finder...")
-    print("Smart shipping rate calculator with intelligent matching")
+    print("Smart shipping rate calculator with intelligent matching - FIXED VERSION")
     
     if data_manager.master_data:
-        print("Ready to serve professional rate requests!")
+        print("✅ Ready to serve professional rate requests!")
         print("Access your app at: http://localhost:5000")
+        print(f"✅ Loaded {len(data_manager.master_data.get('carriers', {}))} carriers from JSON")
     else:
-        print("Master data not loaded. Starting server anyway for debugging...")
+        print("❌ Master data not loaded. Check if courier_rates_master.json exists!")
+        print("Starting server anyway for debugging...")
         print("Access your app at: http://localhost:5000")
     
     # Use different configurations for development vs production
