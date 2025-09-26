@@ -3,7 +3,6 @@ from flask_cors import CORS
 import json
 import os
 import traceback
-import google.generativeai as genai
 from dotenv import load_dotenv
 import logging
 from functools import lru_cache
@@ -48,50 +47,10 @@ def after_request(response):
     response.headers['Access-Control-Max-Age'] = '86400'
     return response
 
-# Configure Gemini
-class GeminiService:
+# Rate Finding Service (replaces Gemini)
+class RateFinderService:
     def __init__(self):
-        self.api_key = os.getenv('VITE_GEMINI_API_KEY') or os.getenv('GEMINI_API_KEY')
-        self.model = None
-        self.configured = False
-        self._initialize()
-    
-    def _initialize(self):
-        if not self.api_key:
-            logger.warning("⚠️  GEMINI_API_KEY not found in environment variables")
-            return
-        
-        try:
-            genai.configure(api_key=self.api_key)
-            # Use a more efficient model configuration
-            generation_config = {
-                "temperature": 0.1,  # Lower temperature for more consistent results
-                "top_p": 0.8,
-                "top_k": 40,
-                "max_output_tokens": 2048,
-            }
-            
-            self.model = genai.GenerativeModel(
-                'gemini-1.5-flash',
-                generation_config=generation_config
-            )
-            
-            # Test the API key with a simple request
-            test_response = self.model.generate_content("Test")
-            if test_response:
-                self.configured = True
-                logger.info("✅ Gemini API configured and validated successfully")
-            else:
-                raise Exception("API key validation failed")
-                
-        except Exception as e:
-            error_msg = str(e)
-            if "API_KEY_INVALID" in error_msg or "expired" in error_msg.lower():
-                logger.error(f"❌ Gemini API key is invalid or expired: {error_msg}")
-                logger.error("💡 Please get a new API key from https://aistudio.google.com/app/apikey")
-            else:
-                logger.error(f"❌ Error configuring Gemini API: {error_msg}")
-            self.configured = False
+        logger.info("✅ Rate finder service initialized")
     
     def analyze_shipping_rates(self, country, weight, relevant_data):
         """Comprehensive search that finds ALL matches programmatically"""
@@ -259,7 +218,7 @@ class GeminiService:
         logger.info(f"🎯 Found {len(all_matches)} total matches for {country}")
         
         return {
-            "analysis": f"Comprehensive search found {len(all_matches)} shipping options for {country} at {weight}kg",
+            "analysis": f"Smart search found {len(all_matches)} shipping options for {country} at {weight}kg",
             "matches_found": all_matches,
             "total_carriers_found": len(set(match['carrier'] for match in all_matches))
         }
@@ -319,40 +278,9 @@ class GeminiService:
                     return True
         
         return False
-    
-    def _fix_json_response(self, response_text):
-        """Fix common JSON formatting issues"""
-        try:
-            # Remove any trailing commas before closing brackets
-            response_text = response_text.replace(',}', '}').replace(',]', ']')
-            
-            # Try to fix unterminated strings by finding incomplete quotes
-            lines = response_text.split('\n')
-            fixed_lines = []
-            
-            for line in lines:
-                # If line has odd number of quotes, try to close it
-                if line.count('"') % 2 == 1 and not line.strip().endswith('"'):
-                    line = line + '"'
-                fixed_lines.append(line)
-            
-            return '\n'.join(fixed_lines)
-        except:
-            return response_text
-    
-    def _create_fallback_response(self, country, weight, raw_response):
-        """Create a fallback response when JSON parsing fails"""
-        logger.warning("🔄 Creating fallback response due to JSON parsing error")
-        
-        return {
-            "analysis": f"AI analysis encountered a formatting issue but search completed for {country} at {weight}kg. Please try again for better results.",
-            "matches_found": [],
-            "total_carriers_found": 0,
-            "fallback": True
-        }
 
-# Initialize Gemini service
-gemini_service = GeminiService()
+# Initialize rate finder service
+rate_finder_service = RateFinderService()
 
 # Data management
 class DataManager:
@@ -465,7 +393,7 @@ class RateCalculator:
     
     @staticmethod
     def get_actual_rates_from_matches(matches, weight, master_data):
-        """Process Gemini matches to get actual rates"""
+        """Process matches to get actual rates"""
         results = []
         
         for match in matches:
@@ -631,17 +559,9 @@ def get_rates():
                 'details': 'courier_rates_master.json file is missing or invalid'
             }), 500
         
-        # Check if Gemini is configured
-        if not gemini_service.configured:
-            logger.error("❌ Gemini API not configured")
-            return jsonify({
-                'error': 'AI service not available',
-                'details': 'Gemini API key not configured'
-            }), 500
-        
         logger.info(f"🔍 Processing request: {country}, {weight}kg")
         
-        # Get relevant data and analyze with Gemini
+        # Get relevant data and analyze
         relevant_data = data_manager.get_relevant_data_for_country(country)
         
         if not relevant_data.get('carriers'):
@@ -654,18 +574,14 @@ def get_rates():
         
         logger.info(f"📊 Found relevant data for {len(relevant_data['carriers'])} carriers")
         
-        # Use Gemini for analysis
-        gemini_analysis = gemini_service.analyze_shipping_rates(country, weight, relevant_data)
+        # Use smart rate finder for analysis (no Gemini)
+        analysis_result = rate_finder_service.analyze_shipping_rates(country, weight, relevant_data)
         
-        if 'error' in gemini_analysis:
-            logger.error(f"❌ Gemini analysis error: {gemini_analysis['error']}")
-            return jsonify({'error': f'Analysis error: {gemini_analysis["error"]}'}), 500
-        
-        logger.info(f"🤖 Gemini found {gemini_analysis.get('total_carriers_found', 0)} matches")
+        logger.info(f"🤖 Smart finder found {analysis_result.get('total_carriers_found', 0)} matches")
         
         # Get actual rates from matches
         rate_results = RateCalculator.get_actual_rates_from_matches(
-            gemini_analysis.get('matches_found', []), 
+            analysis_result.get('matches_found', []), 
             weight, 
             data_manager.master_data
         )
@@ -688,13 +604,13 @@ def get_rates():
             'weight': weight,
             'data': {
                 'zone_mappings': zone_mappings,
-                'gemini_response': {
+                'smart_response': {
                     'results': rate_results,
                     'total_found': len(rate_results),
                     'search_country': country,
                     'search_weight': weight,
-                    'analysis': gemini_analysis.get('analysis', ''),
-                    'gemini_matches': gemini_analysis.get('total_carriers_found', 0)
+                    'analysis': analysis_result.get('analysis', ''),
+                    'matches_found': analysis_result.get('total_carriers_found', 0)
                 }
             }
         }
@@ -718,13 +634,11 @@ def get_carriers():
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    status = "healthy" if data_manager.master_data and gemini_service.configured else "unhealthy"
+    status = "healthy" if data_manager.master_data else "unhealthy"
     return jsonify({
         'status': status,
         'master_data_loaded': data_manager.master_data is not None,
         'carriers_count': len(data_manager.master_data.get('carriers', {})) if data_manager.master_data else 0,
-        'gemini_configured': gemini_service.configured,
-        'gemini_api_key_present': bool(gemini_service.api_key),
         'timestamp': time.time()
     }), 200
 
@@ -771,8 +685,8 @@ def index():
                 font-size: 1.2em;
                 margin: 10px 0;
             }
-            .gemini-badge { 
-                background: linear-gradient(45deg, #4285f4, #34a853); 
+            .smart-badge { 
+                background: linear-gradient(45deg, #28a745, #20c997); 
                 color: white; 
                 padding: 8px 16px; 
                 border-radius: 20px; 
@@ -969,19 +883,19 @@ def index():
     <body>
         <div class="container">
             <div class="header">
-                <h1>🏢 Majithia International Courier</h1>
+                <h1>Majithia International Courier</h1>
                 <div class="subtitle">Professional International Shipping Rate Calculator</div>
-                <div class="gemini-badge">Powered by Gemini AI</div>
+                <div class="smart-badge">Smart Rate Finder</div>
             </div>
             
             <div class="form-section">
                 <div class="form-group">
-                    <label for="country">🌍 Destination Country:</label>
+                    <label for="country">Destination Country:</label>
                     <input type="text" id="country" placeholder="e.g., Canada, Australia, UAE, Singapore" />
                 </div>
                 
                 <div class="form-group">
-                    <label>📦 Package Weight (kg):</label>
+                    <label>Package Weight (kg):</label>
                     <div class="weight-control">
                         <button type="button" class="weight-btn decrease" onclick="decreaseWeight()">−</button>
                         <div class="weight-display" id="weight-display">0.5</div>
@@ -990,7 +904,7 @@ def index():
                     <div class="weight-note">Weight increments: 0.5kg steps only (0.5, 1.0, 1.5, 2.0...)</div>
                 </div>
                 
-                <button class="search-btn" onclick="findRates()">🔍 Find Best Shipping Rates</button>
+                <button class="search-btn" onclick="findRates()">Find Best Shipping Rates</button>
             </div>
             
             <div id="results" class="results"></div>
@@ -1021,11 +935,11 @@ def index():
                 const resultsDiv = document.getElementById('results');
                 
                 if (!country) {
-                    resultsDiv.innerHTML = '<div class="error">⚠️ Please enter a destination country.</div>';
+                    resultsDiv.innerHTML = '<div class="error">Please enter a destination country.</div>';
                     return;
                 }
                 
-                resultsDiv.innerHTML = '<div class="loading">🏢 Majithia International Courier AI is finding best rates...</div>';
+                resultsDiv.innerHTML = '<div class="loading">Smart rate finder is searching for best rates...</div>';
                 
                 try {
                     const response = await fetch('/api/get-rates', {
@@ -1040,47 +954,47 @@ def index():
                     const data = await response.json();
                     
                     if (data.error) {
-                        resultsDiv.innerHTML = `<div class="error">❌ ${data.error}</div>`;
+                        resultsDiv.innerHTML = `<div class="error">${data.error}</div>`;
                         return;
                     }
                     
-                    if (data.data && data.data.gemini_response && data.data.gemini_response.results.length > 0) {
-                        const geminiData = data.data.gemini_response;
+                    if (data.data && data.data.smart_response && data.data.smart_response.results.length > 0) {
+                        const smartData = data.data.smart_response;
                         let html = `
                             <div class="results-header">
-                                <h3>📦 Found ${geminiData.total_found} shipping options for ${data.country} (${data.weight}kg)</h3>
+                                <h3>Found ${smartData.total_found} shipping options for ${data.country} (${data.weight}kg)</h3>
                             </div>
                         `;
                         
-                        if (geminiData.analysis) {
-                            html += `<div class="analysis"><strong>🤖 AI Analysis:</strong> ${geminiData.analysis}</div>`;
+                        if (smartData.analysis) {
+                            html += `<div class="analysis"><strong>Smart Analysis:</strong> ${smartData.analysis}</div>`;
                         }
                         
-                        geminiData.results.sort((a, b) => a.final_rate - b.final_rate);
+                        smartData.results.sort((a, b) => a.final_rate - b.final_rate);
                         
-                        geminiData.results.forEach((rate, index) => {
-                            const rankBadge = index === 0 ? '🥇 BEST RATE' : index === 1 ? '🥈' : index === 2 ? '🥉' : '';
+                        smartData.results.forEach((rate, index) => {
+                            const rankBadge = index === 0 ? 'BEST RATE' : index === 1 ? '2nd Best' : index === 2 ? '3rd Best' : '';
                             html += `
                                 <div class="rate-card">
                                     <div class="carrier-name">${rate.carrier} - ${rate.service_type} ${rankBadge}</div>
                                     <div class="rate-details">
                                         <div class="detail-item">
-                                            <strong>💰 Rate:</strong> ${rate.rate}
+                                            <strong>Rate:</strong> ${rate.rate}
                                         </div>
                                         <div class="detail-item">
-                                            <strong>🧮 Calculation:</strong> ${rate.calculation}
+                                            <strong>Calculation:</strong> ${rate.calculation}
                                         </div>
                                         <div class="detail-item">
-                                            <strong>🎯 Match:</strong> ${rate.matched_country}
+                                            <strong>Match:</strong> ${rate.matched_country}
                                         </div>
                                         <div class="detail-item">
-                                            <strong>⚖️ Weight Tier:</strong> ${rate.weight_tier}kg
+                                            <strong>Weight Tier:</strong> ${rate.weight_tier}kg
                                         </div>
                                         <div class="detail-item">
-                                            <strong>🔍 Method:</strong> ${rate.match_type.replace('_', ' ')}
+                                            <strong>Method:</strong> ${rate.match_type.replace('_', ' ')}
                                         </div>
-                                        ${rate.zone ? `<div class="detail-item"><strong>🌐 Zone:</strong> ${rate.zone}</div>` : ''}
-                                        ${rate.reasoning ? `<div class="detail-item"><strong>💡 Why:</strong> ${rate.reasoning}</div>` : ''}
+                                        ${rate.zone ? `<div class="detail-item"><strong>Zone:</strong> ${rate.zone}</div>` : ''}
+                                        ${rate.reasoning ? `<div class="detail-item"><strong>Details:</strong> ${rate.reasoning}</div>` : ''}
                                     </div>
                                 </div>
                             `;
@@ -1088,12 +1002,12 @@ def index():
                         
                         resultsDiv.innerHTML = html;
                     } else {
-                        resultsDiv.innerHTML = '<div class="no-results">🏢 No shipping options available for this destination and weight combination.</div>';
+                        resultsDiv.innerHTML = '<div class="no-results">No shipping options available for this destination and weight combination.</div>';
                     }
                     
                 } catch (error) {
                     console.error('Network error:', error);
-                    resultsDiv.innerHTML = `<div class="error">❌ Network error: ${error.message}</div>`;
+                    resultsDiv.innerHTML = `<div class="error">Network error: ${error.message}</div>`;
                 }
             }
             
@@ -1119,19 +1033,15 @@ def internal_error(error):
     return jsonify({'error': 'Internal server error'}), 500
 
 if __name__ == '__main__':
-    print("🏢 Starting Majithia International Courier Rate Finder...")
-    print("✨ Professional shipping rate calculator with AI intelligence")
-    
-    if not gemini_service.api_key:
-        print("⚠️  Warning: GEMINI_API_KEY not found in environment variables")
-        print("   Please add your Gemini API key to .env file")
+    print("Starting Majithia International Courier Rate Finder...")
+    print("Smart shipping rate calculator with intelligent matching")
     
     if data_manager.master_data:
-        print("✅ Ready to serve professional rate requests!")
-        print("🌐 Access your app at: http://localhost:5000")
+        print("Ready to serve professional rate requests!")
+        print("Access your app at: http://localhost:5000")
     else:
-        print("❌ Master data not loaded. Starting server anyway for debugging...")
-        print("🌐 Access your app at: http://localhost:5000")
+        print("Master data not loaded. Starting server anyway for debugging...")
+        print("Access your app at: http://localhost:5000")
     
     # Use different configurations for development vs production
     debug_mode = os.getenv('FLASK_ENV') == 'development'
