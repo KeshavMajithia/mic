@@ -171,6 +171,7 @@ class RateFinderService:
                                     match_pattern = pattern
                                     logger.info(f"  ✅ EXACT MATCH: '{pattern}'")
                                     break
+                                # Also check if pattern is contained in location
                                 elif pattern in location_upper:
                                     is_zone_match = True
                                     match_pattern = pattern
@@ -185,6 +186,7 @@ class RateFinderService:
                                 weight_valid = self._has_valid_weight(rate_data, weight)
                                 logger.info(f"⚖️ Weight validation for {location_key}: {weight_valid}")
                                 
+                                # Include match even if weight validation fails for debugging
                                 zone_matches.append({
                                     "carrier": carrier_key,
                                     "service": service_name,
@@ -396,9 +398,6 @@ class RateCalculator:
         results = []
         
         for match in matches:
-            if not match.get('weight_available', False):
-                continue
-            
             try:
                 carrier = match['carrier']
                 service = match['service']
@@ -423,6 +422,19 @@ class RateCalculator:
                     weight_data = service_data[actual_location_key.lower()]
                 else:
                     logger.error(f"Location key {actual_location_key} not found in service_data: {list(service_data.keys())}")
+                    results.append({
+                        'carrier': carrier,
+                        'service_type': RateCalculator._format_service_name(service, location_key, actual_location_key),
+                        'rate': 'N/A',
+                        'currency': 'N/A',
+                        'zone': match.get('zone', ''),
+                        'calculation': 'No valid rate data found',
+                        'matched_country': RateCalculator._format_matched_country(location_key, actual_location_key),
+                        'weight_tier': 'N/A',
+                        'match_type': match['match_type'],
+                        'reasoning': f"Location key {actual_location_key} not found",
+                        'final_rate': 0
+                    })
                     continue
                 
                 available_weights = list(weight_data.keys())
@@ -456,11 +468,35 @@ class RateCalculator:
                     results.append(result)
                 else:
                     logger.error(f"No valid weight tier found for {carrier} {service} {actual_location_key}. Available weights: {available_weights}")
-                    # Skip invalid
+                    results.append({
+                        'carrier': carrier,
+                        'service_type': RateCalculator._format_service_name(service, location_key, actual_location_key),
+                        'rate': 'N/A',
+                        'currency': 'N/A',
+                        'zone': match.get('zone', ''),
+                        'calculation': f"No valid weight tier for {weight}kg",
+                        'matched_country': RateCalculator._format_matched_country(location_key, actual_location_key),
+                        'weight_tier': 'N/A',
+                        'match_type': match['match_type'],
+                        'reasoning': f"No valid weight tier found. Available weights: {available_weights}",
+                        'final_rate': 0
+                    })
                 
             except Exception as e:
                 logger.error(f"❌ Error processing match {match}: {e}")
-                # Skip
+                results.append({
+                    'carrier': match.get('carrier', 'Unknown'),
+                    'service_type': RateCalculator._format_service_name(match.get('service', 'Unknown'), location_key, match.get('location_key', 'Unknown')),
+                    'rate': 'N/A',
+                    'currency': 'N/A',
+                    'zone': match.get('zone', ''),
+                    'calculation': 'Error processing rate data',
+                    'matched_country': RateCalculator._format_matched_country(match.get('location_key', 'Unknown'), match.get('location_key', 'Unknown')),
+                    'weight_tier': 'N/A',
+                    'match_type': match.get('match_type', 'unknown'),
+                    'reasoning': f"Error: {str(e)}",
+                    'final_rate': 0
+                })
         
         return results
     
@@ -509,7 +545,7 @@ def get_rates():
             return jsonify({'error': 'Country is required'}), 400
         
         if not weight or float(weight) <= 0:
-            return jsonify({'error': 'Valid weight is required'}), 400
+            return jsonify({'error': 'Valid weight is required'}), 400  # FIXED: was jupytext
         
         # Validate weight format
         is_valid, error_msg = RateCalculator.validate_weight_input(weight)
@@ -551,7 +587,7 @@ def get_rates():
             data_manager.master_data
         )
         
-        # Prepare zone mappings for response with case-insensitive matching
+        # Prepare zone mappings for response
         zone_mappings = {}
         for carrier_name in ['fedex', 'dhl', 'ups']:
             zone_mapping = data_manager.master_data.get('zone_mappings', {}).get(carrier_name, {})
@@ -907,6 +943,8 @@ def index():
                 resultsDiv.innerHTML = '<div class="loading">Smart rate finder is searching for best rates...</div>';
                 
                 try {
+                    console.log('Making request with:', { country, weight });
+                    
                     const response = await fetch('/api/get-rates', {
                         method: 'POST',
                         headers: { 
@@ -916,73 +954,100 @@ def index():
                         body: JSON.stringify({ country, weight })
                     });
                     
+                    console.log('Response status:', response.status);
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    
                     const data = await response.json();
+                    console.log('Response data:', data);
                     
                     if (data.error) {
                         resultsDiv.innerHTML = `<div class="error">${data.error}</div>`;
                         return;
                     }
                     
-                    if (data.data && data.data.smart_response && data.data.smart_response.results.length > 0) {
-                        const smartData = data.data.smart_response;
-                        let html = `
-                            <div class="results-header">
-                                <h3>Found ${smartData.total_found} shipping options for ${data.country} (${data.weight}kg)</h3>
+                    // Check if we have valid data structure
+                    if (!data.data || !data.data.smart_response) {
+                        console.error('Invalid response structure:', data);
+                        resultsDiv.innerHTML = '<div class="error">Invalid response from server</div>';
+                        return;
+                    }
+                    
+                    const smartData = data.data.smart_response;
+                    
+                    if (!smartData.results || smartData.results.length === 0) {
+                        resultsDiv.innerHTML = '<div class="no-results">No shipping options available for this destination and weight combination.</div>';
+                        return;
+                    }
+                    
+                    // Display results
+                    let html = `
+                        <div class="results-header">
+                            <h3>Found ${smartData.total_found} shipping options for ${data.country} (${data.weight}kg)</h3>
+                        </div>
+                    `;
+                    
+                    if (smartData.analysis) {
+                        html += `<div class="analysis"><strong>Smart Analysis:</strong> ${smartData.analysis}</div>`;
+                    }
+                    
+                    // Sort by final_rate (lowest first)
+                    const sortedResults = [...smartData.results].sort((a, b) => {
+                        const rateA = parseFloat(a.final_rate) || 0;
+                        const rateB = parseFloat(b.final_rate) || 0;
+                        return rateA - rateB;
+                    });
+                    
+                    sortedResults.forEach((rate, index) => {
+                        let rankBadge = '';
+                        if (index === 0 && parseFloat(rate.final_rate) > 0) rankBadge = ' - BEST RATE ⭐';
+                        else if (index === 1 && parseFloat(rate.final_rate) > 0) rankBadge = ' - 2nd Best';
+                        else if (index === 2 && parseFloat(rate.final_rate) > 0) rankBadge = ' - 3rd Best';
+                        
+                        html += `
+                            <div class="rate-card">
+                                <div class="carrier-name">${rate.carrier} - ${rate.service_type}${rankBadge}</div>
+                                <div class="rate-details">
+                                    <div class="detail-item">
+                                        <strong>Rate:</strong> ${rate.rate}
+                                    </div>
+                                    <div class="detail-item">
+                                        <strong>Calculation:</strong> ${rate.calculation}
+                                    </div>
+                                    <div class="detail-item">
+                                        <strong>Match:</strong> ${rate.matched_country}
+                                    </div>
+                                    <div class="detail-item">
+                                        <strong>Weight Tier:</strong> ${rate.weight_tier}kg
+                                    </div>
+                                    <div class="detail-item">
+                                        <strong>Method:</strong> ${rate.match_type.replace('_', ' ')}
+                                    </div>
+                                    ${rate.zone ? `<div class="detail-item"><strong>Zone:</strong> ${rate.zone}</div>` : ''}
+                                    ${rate.reasoning ? `<div class="detail-item"><strong>Details:</strong> ${rate.reasoning}</div>` : ''}
+                                </div>
                             </div>
                         `;
-                        
-                        if (smartData.analysis) {
-                            html += `<div class="analysis"><strong>Smart Analysis:</strong> ${smartData.analysis}</div>`;
-                        }
-                        
-                        smartData.results.sort((a, b) => a.final_rate - b.final_rate);
-                        
-                        smartData.results.forEach((rate, index) => {
-                            if (rate.rate === 'N/A') return; // Skip invalid rates
-                            const rankBadge = index === 0 ? 'BEST RATE' : index === 1 ? '2nd Best' : index === 2 ? '3rd Best' : '';
-                            html += `
-                                <div class="rate-card">
-                                    <div class="carrier-name">${rate.carrier} - ${rate.service_type} ${rankBadge}</div>
-                                    <div class="rate-details">
-                                        <div class="detail-item">
-                                            <strong>Rate:</strong> ${rate.rate}
-                                        </div>
-                                        <div class="detail-item">
-                                            <strong>Calculation:</strong> ${rate.calculation}
-                                        </div>
-                                        <div class="detail-item">
-                                            <strong>Match:</strong> ${rate.matched_country}
-                                        </div>
-                                        <div class="detail-item">
-                                            <strong>Weight Tier:</strong> ${rate.weight_tier}kg
-                                        </div>
-                                        <div class="detail-item">
-                                            <strong>Method:</strong> ${rate.match_type.replace('_', ' ')}
-                                        </div>
-                                        ${rate.zone ? `<div class="detail-item"><strong>Zone:</strong> ${rate.zone}</div>` : ''}
-                                        ${rate.reasoning ? `<div class="detail-item"><strong>Details:</strong> ${rate.reasoning}</div>` : ''}
-                                    </div>
-                                </div>
-                            `;
-                        });
-                        
-                        resultsDiv.innerHTML = html;
-                    } else {
-                        resultsDiv.innerHTML = '<div class="no-results">No shipping options available for this destination and weight combination.</div>';
-                    }
+                    });
+                    
+                    resultsDiv.innerHTML = html;
                     
                 } catch (error) {
                     console.error('Network error:', error);
-                    resultsDiv.innerHTML = `<div class="error">Network error: ${error.message}</div>`;
+                    resultsDiv.innerHTML = `<div class="error">Network error: ${error.message}. Please check the console for more details.</div>`;
                 }
             }
             
+            // Allow Enter key to trigger search
             document.addEventListener('keypress', function(e) {
                 if (e.key === 'Enter') {
                     findRates();
                 }
             });
             
+            // Initialize weight display
             updateWeightDisplay();
         </script>
     </body>
