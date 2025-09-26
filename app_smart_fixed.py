@@ -171,7 +171,6 @@ class RateFinderService:
                                     match_pattern = pattern
                                     logger.info(f"  ✅ EXACT MATCH: '{pattern}'")
                                     break
-                                # Also check if pattern is contained in location
                                 elif pattern in location_upper:
                                     is_zone_match = True
                                     match_pattern = pattern
@@ -186,7 +185,6 @@ class RateFinderService:
                                 weight_valid = self._has_valid_weight(rate_data, weight)
                                 logger.info(f"⚖️ Weight validation for {location_key}: {weight_valid}")
                                 
-                                # Include match even if weight validation fails for debugging
                                 zone_matches.append({
                                     "carrier": carrier_key,
                                     "service": service_name,
@@ -398,6 +396,9 @@ class RateCalculator:
         results = []
         
         for match in matches:
+            if not match.get('weight_available', False):
+                continue
+            
             try:
                 carrier = match['carrier']
                 service = match['service']
@@ -422,19 +423,6 @@ class RateCalculator:
                     weight_data = service_data[actual_location_key.lower()]
                 else:
                     logger.error(f"Location key {actual_location_key} not found in service_data: {list(service_data.keys())}")
-                    results.append({
-                        'carrier': carrier,
-                        'service_type': RateCalculator._format_service_name(service, location_key, actual_location_key),
-                        'rate': 'N/A',
-                        'currency': 'N/A',
-                        'zone': match.get('zone', ''),
-                        'calculation': 'No valid rate data found',
-                        'matched_country': RateCalculator._format_matched_country(location_key, actual_location_key),
-                        'weight_tier': 'N/A',
-                        'match_type': match['match_type'],
-                        'reasoning': f"Location key {actual_location_key} not found",
-                        'final_rate': 0
-                    })
                     continue
                 
                 available_weights = list(weight_data.keys())
@@ -468,35 +456,11 @@ class RateCalculator:
                     results.append(result)
                 else:
                     logger.error(f"No valid weight tier found for {carrier} {service} {actual_location_key}. Available weights: {available_weights}")
-                    results.append({
-                        'carrier': carrier,
-                        'service_type': RateCalculator._format_service_name(service, location_key, actual_location_key),
-                        'rate': 'N/A',
-                        'currency': 'N/A',
-                        'zone': match.get('zone', ''),
-                        'calculation': f"No valid weight tier for {weight}kg",
-                        'matched_country': RateCalculator._format_matched_country(location_key, actual_location_key),
-                        'weight_tier': 'N/A',
-                        'match_type': match['match_type'],
-                        'reasoning': f"No valid weight tier found. Available weights: {available_weights}",
-                        'final_rate': 0
-                    })
+                    # Skip invalid
                 
             except Exception as e:
                 logger.error(f"❌ Error processing match {match}: {e}")
-                results.append({
-                    'carrier': carrier,
-                    'service_type': RateCalculator._format_service_name(service, location_key, actual_location_key),
-                    'rate': 'N/A',
-                    'currency': 'N/A',
-                    'zone': match.get('zone', ''),
-                    'calculation': 'Error processing rate data',
-                    'matched_country': RateCalculator._format_matched_country(location_key, actual_location_key),
-                    'weight_tier': 'N/A',
-                    'match_type': match['match_type'],
-                    'reasoning': f"Error: {str(e)}",
-                    'final_rate': 0
-                })
+                # Skip
         
         return results
     
@@ -545,7 +509,7 @@ def get_rates():
             return jsonify({'error': 'Country is required'}), 400
         
         if not weight or float(weight) <= 0:
-            return jupytext({'error': 'Valid weight is required'}), 400
+            return jsonify({'error': 'Valid weight is required'}), 400
         
         # Validate weight format
         is_valid, error_msg = RateCalculator.validate_weight_input(weight)
@@ -587,7 +551,7 @@ def get_rates():
             data_manager.master_data
         )
         
-        # Prepare zone mappings for response
+        # Prepare zone mappings for response with case-insensitive matching
         zone_mappings = {}
         for carrier_name in ['fedex', 'dhl', 'ups']:
             zone_mapping = data_manager.master_data.get('zone_mappings', {}).get(carrier_name, {})
@@ -974,6 +938,7 @@ def index():
                         smartData.results.sort((a, b) => a.final_rate - b.final_rate);
                         
                         smartData.results.forEach((rate, index) => {
+                            if (rate.rate === 'N/A') return; // Skip invalid rates
                             const rankBadge = index === 0 ? 'BEST RATE' : index === 1 ? '2nd Best' : index === 2 ? '3rd Best' : '';
                             html += `
                                 <div class="rate-card">
