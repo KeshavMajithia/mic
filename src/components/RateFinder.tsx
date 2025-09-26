@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
 import { Search, ArrowLeft, Package, MapPin, Truck, DollarSign, Clock, CheckCircle, AlertCircle } from 'lucide-react';
-
 function RateFinder() {
   const [country, setCountry] = useState('');
   const [weight, setWeight] = useState('');
