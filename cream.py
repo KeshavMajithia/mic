@@ -3,6 +3,7 @@ from flask_cors import CORS
 import json
 import os
 import traceback
+import google.generativeai as genai
 from dotenv import load_dotenv
 import logging
 from functools import lru_cache
@@ -47,10 +48,50 @@ def after_request(response):
     response.headers['Access-Control-Max-Age'] = '86400'
     return response
 
-# Rate Finding Service (replaces Gemini)
-class RateFinderService:
+# Configure Gemini
+class GeminiService:
     def __init__(self):
-        logger.info("✅ Rate finder service initialized")
+        self.api_key = os.getenv('VITE_GEMINI_API_KEY') or os.getenv('GEMINI_API_KEY')
+        self.model = None
+        self.configured = False
+        self._initialize()
+    
+    def _initialize(self):
+        if not self.api_key:
+            logger.warning("⚠️  GEMINI_API_KEY not found in environment variables")
+            return
+        
+        try:
+            genai.configure(api_key=self.api_key)
+            # Use a more efficient model configuration
+            generation_config = {
+                "temperature": 0.1,  # Lower temperature for more consistent results
+                "top_p": 0.8,
+                "top_k": 40,
+                "max_output_tokens": 2048,
+            }
+            
+            self.model = genai.GenerativeModel(
+                'gemini-1.5-flash',
+                generation_config=generation_config
+            )
+            
+            # Test the API key with a simple request
+            test_response = self.model.generate_content("Test")
+            if test_response:
+                self.configured = True
+                logger.info("✅ Gemini API configured and validated successfully")
+            else:
+                raise Exception("API key validation failed")
+                
+        except Exception as e:
+            error_msg = str(e)
+            if "API_KEY_INVALID" in error_msg or "expired" in error_msg.lower():
+                logger.error(f"❌ Gemini API key is invalid or expired: {error_msg}")
+                logger.error("💡 Please get a new API key from https://aistudio.google.com/app/apikey")
+            else:
+                logger.error(f"❌ Error configuring Gemini API: {error_msg}")
+            self.configured = False
     
     def analyze_shipping_rates(self, country, weight, relevant_data):
         """Comprehensive search that finds ALL matches programmatically"""
@@ -117,10 +158,9 @@ class RateFinderService:
         # 2. ZONE-BASED MATCHES - Check zone mappings for each carrier
         logger.info(f"🌍 Starting zone-based search...")
         
-        for zone_carrier, zone_mapping in zone_mappings.items():
-            carrier_key = next((ck for ck in carriers if ck.lower() == zone_carrier.lower()), None)
-            if carrier_key:
-                logger.info(f"🔍 Checking {carrier_key} ({zone_carrier}) zone mappings...")
+        for carrier_name, zone_mapping in zone_mappings.items():
+            if carrier_name in carriers:
+                logger.info(f"🔍 Checking {carrier_name} zone mappings...")
                 
                 # Find zone for this country
                 country_zone = None
@@ -141,7 +181,7 @@ class RateFinderService:
                 
                 if country_zone:
                     # Look for services with this zone
-                    services = carriers[carrier_key].get('services', {})
+                    services = carriers[carrier_name].get('services', {})
                     for service_name, service_data in services.items():
                         
                         # Look for zone-based location keys
@@ -166,7 +206,7 @@ class RateFinderService:
                             
                             for pattern in zone_patterns:
                                 logger.info(f"  🔎 Testing pattern: '{pattern}' vs '{location_upper}'")
-                                if location_upper == pattern:
+                                if location_upper == pattern or pattern == location_upper:
                                     is_zone_match = True
                                     match_pattern = pattern
                                     logger.info(f"  ✅ EXACT MATCH: '{pattern}'")
@@ -188,7 +228,7 @@ class RateFinderService:
                                 
                                 # Include match even if weight validation fails for debugging
                                 zone_matches.append({
-                                    "carrier": carrier_key,
+                                    "carrier": carrier_name,
                                     "service": service_name,
                                     "location_key": location_key,
                                     "match_type": "zone_based",
@@ -196,13 +236,13 @@ class RateFinderService:
                                     "zone_country": matched_zone_country,
                                     "weight_available": weight_valid
                                 })
-                                logger.info(f"✅ Added zone match: {carrier_key} {service_name} -> {location_key} (weight_valid={weight_valid})")
+                                logger.info(f"✅ Added zone match: {carrier_name} {service_name} -> {location_key} (weight_valid={weight_valid})")
                         
                         # Add all zone matches for this service
                         for match in zone_matches:
                             # Avoid duplicates
                             match_exists = any(
-                                m['carrier'] == carrier_key and 
+                                m['carrier'] == carrier_name and 
                                 m['service'] == service_name and 
                                 m['location_key'] == location_key 
                                 for m in all_matches
@@ -210,16 +250,16 @@ class RateFinderService:
                             
                             if not match_exists:
                                 all_matches.append(match)
-                                logger.info(f"✅ Zone match: {carrier_key} {service_name} -> {match['location_key']} (Zone {country_zone} via {matched_zone_country})")
+                                logger.info(f"✅ Zone match: {carrier_name} {service_name} -> {match['location_key']} (Zone {country_zone} via {matched_zone_country})")
                             else:
-                                logger.info(f"⚠️ Duplicate match skipped: {carrier_key} {service_name} -> {location_key}")
+                                logger.info(f"⚠️ Duplicate match skipped: {carrier_name} {service_name} -> {location_key}")
                 else:
-                    logger.info(f"⚠️ No zone mapping found for {country} in {carrier_key}")
+                    logger.info(f"⚠️ No zone mapping found for {country} in {carrier_name}")
         
         logger.info(f"🎯 Found {len(all_matches)} total matches for {country}")
         
         return {
-            "analysis": f"Smart search found {len(all_matches)} shipping options for {country} at {weight}kg",
+            "analysis": f"Comprehensive search found {len(all_matches)} shipping options for {country} at {weight}kg",
             "matches_found": all_matches,
             "total_carriers_found": len(set(match['carrier'] for match in all_matches))
         }
@@ -279,9 +319,40 @@ class RateFinderService:
                     return True
         
         return False
+    
+    def _fix_json_response(self, response_text):
+        """Fix common JSON formatting issues"""
+        try:
+            # Remove any trailing commas before closing brackets
+            response_text = response_text.replace(',}', '}').replace(',]', ']')
+            
+            # Try to fix unterminated strings by finding incomplete quotes
+            lines = response_text.split('\n')
+            fixed_lines = []
+            
+            for line in lines:
+                # If line has odd number of quotes, try to close it
+                if line.count('"') % 2 == 1 and not line.strip().endswith('"'):
+                    line = line + '"'
+                fixed_lines.append(line)
+            
+            return '\n'.join(fixed_lines)
+        except:
+            return response_text
+    
+    def _create_fallback_response(self, country, weight, raw_response):
+        """Create a fallback response when JSON parsing fails"""
+        logger.warning("🔄 Creating fallback response due to JSON parsing error")
+        
+        return {
+            "analysis": f"AI analysis encountered a formatting issue but search completed for {country} at {weight}kg. Please try again for better results.",
+            "matches_found": [],
+            "total_carriers_found": 0,
+            "fallback": True
+        }
 
-# Initialize rate finder service
-rate_finder_service = RateFinderService()
+# Initialize Gemini service
+gemini_service = GeminiService()
 
 # Data management
 class DataManager:
@@ -348,7 +419,7 @@ class DataManager:
                 for zone_carrier, zone_mapping in relevant_data["zone_mappings"].items():
                     if zone_carrier.lower() == carrier_name.lower():
                         for mapped_country, zone in zone_mapping.items():
-                            if country_upper in mapped_country.upper() or mapped_country.upper() in country_upper:
+                            if country_upper in mapped_country or mapped_country in country_upper:
                                 zone_key = f"ZONE {zone}" if not str(zone).startswith("ZONE") else str(zone)
                                 if zone_key in service_data:
                                     has_country_data = True
@@ -394,7 +465,7 @@ class RateCalculator:
     
     @staticmethod
     def get_actual_rates_from_matches(matches, weight, master_data):
-        """Process matches to get actual rates"""
+        """Process Gemini matches to get actual rates"""
         results = []
         
         for match in matches:
@@ -485,15 +556,15 @@ class RateCalculator:
             except Exception as e:
                 logger.error(f"❌ Error processing match {match}: {e}")
                 results.append({
-                    'carrier': match.get('carrier', 'Unknown'),
-                    'service_type': RateCalculator._format_service_name(match.get('service', 'Unknown'), location_key, match.get('location_key', 'Unknown')),
+                    'carrier': carrier,
+                    'service_type': RateCalculator._format_service_name(service, location_key, actual_location_key),
                     'rate': 'N/A',
                     'currency': 'N/A',
                     'zone': match.get('zone', ''),
                     'calculation': 'Error processing rate data',
-                    'matched_country': RateCalculator._format_matched_country(match.get('location_key', 'Unknown'), match.get('location_key', 'Unknown')),
+                    'matched_country': RateCalculator._format_matched_country(location_key, actual_location_key),
                     'weight_tier': 'N/A',
-                    'match_type': match.get('match_type', 'unknown'),
+                    'match_type': match['match_type'],
                     'reasoning': f"Error: {str(e)}",
                     'final_rate': 0
                 })
@@ -545,7 +616,7 @@ def get_rates():
             return jsonify({'error': 'Country is required'}), 400
         
         if not weight or float(weight) <= 0:
-            return jsonify({'error': 'Valid weight is required'}), 400  # FIXED: was jupytext
+            return jsonify({'error': 'Valid weight is required'}), 400
         
         # Validate weight format
         is_valid, error_msg = RateCalculator.validate_weight_input(weight)
@@ -560,9 +631,17 @@ def get_rates():
                 'details': 'courier_rates_master.json file is missing or invalid'
             }), 500
         
+        # Check if Gemini is configured
+        if not gemini_service.configured:
+            logger.error("❌ Gemini API not configured")
+            return jsonify({
+                'error': 'AI service not available',
+                'details': 'Gemini API key not configured'
+            }), 500
+        
         logger.info(f"🔍 Processing request: {country}, {weight}kg")
         
-        # Get relevant data and analyze
+        # Get relevant data and analyze with Gemini
         relevant_data = data_manager.get_relevant_data_for_country(country)
         
         if not relevant_data.get('carriers'):
@@ -575,14 +654,18 @@ def get_rates():
         
         logger.info(f"📊 Found relevant data for {len(relevant_data['carriers'])} carriers")
         
-        # Use smart rate finder for analysis (no Gemini)
-        analysis_result = rate_finder_service.analyze_shipping_rates(country, weight, relevant_data)
+        # Use Gemini for analysis
+        gemini_analysis = gemini_service.analyze_shipping_rates(country, weight, relevant_data)
         
-        logger.info(f"🤖 Smart finder found {analysis_result.get('total_carriers_found', 0)} matches")
+        if 'error' in gemini_analysis:
+            logger.error(f"❌ Gemini analysis error: {gemini_analysis['error']}")
+            return jsonify({'error': f'Analysis error: {gemini_analysis["error"]}'}), 500
+        
+        logger.info(f"🤖 Gemini found {gemini_analysis.get('total_carriers_found', 0)} matches")
         
         # Get actual rates from matches
         rate_results = RateCalculator.get_actual_rates_from_matches(
-            analysis_result.get('matches_found', []), 
+            gemini_analysis.get('matches_found', []), 
             weight, 
             data_manager.master_data
         )
@@ -593,7 +676,7 @@ def get_rates():
             zone_mapping = data_manager.master_data.get('zone_mappings', {}).get(carrier_name, {})
             country_upper = country.upper()
             for mapped_country, zone in zone_mapping.items():
-                if country_upper in mapped_country.upper() or mapped_country.upper() in country_upper:
+                if country_upper in mapped_country or mapped_country in country_upper:
                     zone_mappings[f'{carrier_name}_zone'] = zone
                     break
         
@@ -605,13 +688,13 @@ def get_rates():
             'weight': weight,
             'data': {
                 'zone_mappings': zone_mappings,
-                'smart_response': {
+                'gemini_response': {
                     'results': rate_results,
                     'total_found': len(rate_results),
                     'search_country': country,
                     'search_weight': weight,
-                    'analysis': analysis_result.get('analysis', ''),
-                    'matches_found': analysis_result.get('total_carriers_found', 0)
+                    'analysis': gemini_analysis.get('analysis', ''),
+                    'gemini_matches': gemini_analysis.get('total_carriers_found', 0)
                 }
             }
         }
@@ -635,11 +718,13 @@ def get_carriers():
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    status = "healthy" if data_manager.master_data else "unhealthy"
+    status = "healthy" if data_manager.master_data and gemini_service.configured else "unhealthy"
     return jsonify({
         'status': status,
         'master_data_loaded': data_manager.master_data is not None,
         'carriers_count': len(data_manager.master_data.get('carriers', {})) if data_manager.master_data else 0,
+        'gemini_configured': gemini_service.configured,
+        'gemini_api_key_present': bool(gemini_service.api_key),
         'timestamp': time.time()
     }), 200
 
@@ -686,8 +771,8 @@ def index():
                 font-size: 1.2em;
                 margin: 10px 0;
             }
-            .smart-badge { 
-                background: linear-gradient(45deg, #28a745, #20c997); 
+            .gemini-badge { 
+                background: linear-gradient(45deg, #4285f4, #34a853); 
                 color: white; 
                 padding: 8px 16px; 
                 border-radius: 20px; 
@@ -884,19 +969,19 @@ def index():
     <body>
         <div class="container">
             <div class="header">
-                <h1>Majithia International Courier</h1>
+                <h1>🏢 Majithia International Courier</h1>
                 <div class="subtitle">Professional International Shipping Rate Calculator</div>
-                <div class="smart-badge">Smart Rate Finder</div>
+                <div class="gemini-badge">Powered by Gemini AI</div>
             </div>
             
             <div class="form-section">
                 <div class="form-group">
-                    <label for="country">Destination Country:</label>
+                    <label for="country">🌍 Destination Country:</label>
                     <input type="text" id="country" placeholder="e.g., Canada, Australia, UAE, Singapore" />
                 </div>
                 
                 <div class="form-group">
-                    <label>Package Weight (kg):</label>
+                    <label>📦 Package Weight (kg):</label>
                     <div class="weight-control">
                         <button type="button" class="weight-btn decrease" onclick="decreaseWeight()">−</button>
                         <div class="weight-display" id="weight-display">0.5</div>
@@ -905,7 +990,7 @@ def index():
                     <div class="weight-note">Weight increments: 0.5kg steps only (0.5, 1.0, 1.5, 2.0...)</div>
                 </div>
                 
-                <button class="search-btn" onclick="findRates()">Find Best Shipping Rates</button>
+                <button class="search-btn" onclick="findRates()">🔍 Find Best Shipping Rates</button>
             </div>
             
             <div id="results" class="results"></div>
@@ -936,15 +1021,13 @@ def index():
                 const resultsDiv = document.getElementById('results');
                 
                 if (!country) {
-                    resultsDiv.innerHTML = '<div class="error">Please enter a destination country.</div>';
+                    resultsDiv.innerHTML = '<div class="error">⚠️ Please enter a destination country.</div>';
                     return;
                 }
                 
-                resultsDiv.innerHTML = '<div class="loading">Smart rate finder is searching for best rates...</div>';
+                resultsDiv.innerHTML = '<div class="loading">🏢 Majithia International Courier AI is finding best rates...</div>';
                 
                 try {
-                    console.log('Making request with:', { country, weight });
-                    
                     const response = await fetch('/api/get-rates', {
                         method: 'POST',
                         headers: { 
@@ -954,100 +1037,72 @@ def index():
                         body: JSON.stringify({ country, weight })
                     });
                     
-                    console.log('Response status:', response.status);
-                    
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    
                     const data = await response.json();
-                    console.log('Response data:', data);
                     
                     if (data.error) {
-                        resultsDiv.innerHTML = `<div class="error">${data.error}</div>`;
+                        resultsDiv.innerHTML = `<div class="error">❌ ${data.error}</div>`;
                         return;
                     }
                     
-                    // Check if we have valid data structure
-                    if (!data.data || !data.data.smart_response) {
-                        console.error('Invalid response structure:', data);
-                        resultsDiv.innerHTML = '<div class="error">Invalid response from server</div>';
-                        return;
-                    }
-                    
-                    const smartData = data.data.smart_response;
-                    
-                    if (!smartData.results || smartData.results.length === 0) {
-                        resultsDiv.innerHTML = '<div class="no-results">No shipping options available for this destination and weight combination.</div>';
-                        return;
-                    }
-                    
-                    // Display results
-                    let html = `
-                        <div class="results-header">
-                            <h3>Found ${smartData.total_found} shipping options for ${data.country} (${data.weight}kg)</h3>
-                        </div>
-                    `;
-                    
-                    if (smartData.analysis) {
-                        html += `<div class="analysis"><strong>Smart Analysis:</strong> ${smartData.analysis}</div>`;
-                    }
-                    
-                    // Sort by final_rate (lowest first)
-                    const sortedResults = [...smartData.results].sort((a, b) => {
-                        const rateA = parseFloat(a.final_rate) || 0;
-                        const rateB = parseFloat(b.final_rate) || 0;
-                        return rateA - rateB;
-                    });
-                    
-                    sortedResults.forEach((rate, index) => {
-                        let rankBadge = '';
-                        if (index === 0 && parseFloat(rate.final_rate) > 0) rankBadge = ' - BEST RATE ⭐';
-                        else if (index === 1 && parseFloat(rate.final_rate) > 0) rankBadge = ' - 2nd Best';
-                        else if (index === 2 && parseFloat(rate.final_rate) > 0) rankBadge = ' - 3rd Best';
-                        
-                        html += `
-                            <div class="rate-card">
-                                <div class="carrier-name">${rate.carrier} - ${rate.service_type}${rankBadge}</div>
-                                <div class="rate-details">
-                                    <div class="detail-item">
-                                        <strong>Rate:</strong> ${rate.rate}
-                                    </div>
-                                    <div class="detail-item">
-                                        <strong>Calculation:</strong> ${rate.calculation}
-                                    </div>
-                                    <div class="detail-item">
-                                        <strong>Match:</strong> ${rate.matched_country}
-                                    </div>
-                                    <div class="detail-item">
-                                        <strong>Weight Tier:</strong> ${rate.weight_tier}kg
-                                    </div>
-                                    <div class="detail-item">
-                                        <strong>Method:</strong> ${rate.match_type.replace('_', ' ')}
-                                    </div>
-                                    ${rate.zone ? `<div class="detail-item"><strong>Zone:</strong> ${rate.zone}</div>` : ''}
-                                    ${rate.reasoning ? `<div class="detail-item"><strong>Details:</strong> ${rate.reasoning}</div>` : ''}
-                                </div>
+                    if (data.data && data.data.gemini_response && data.data.gemini_response.results.length > 0) {
+                        const geminiData = data.data.gemini_response;
+                        let html = `
+                            <div class="results-header">
+                                <h3>📦 Found ${geminiData.total_found} shipping options for ${data.country} (${data.weight}kg)</h3>
                             </div>
                         `;
-                    });
-                    
-                    resultsDiv.innerHTML = html;
+                        
+                        if (geminiData.analysis) {
+                            html += `<div class="analysis"><strong>🤖 AI Analysis:</strong> ${geminiData.analysis}</div>`;
+                        }
+                        
+                        geminiData.results.sort((a, b) => a.final_rate - b.final_rate);
+                        
+                        geminiData.results.forEach((rate, index) => {
+                            const rankBadge = index === 0 ? '🥇 BEST RATE' : index === 1 ? '🥈' : index === 2 ? '🥉' : '';
+                            html += `
+                                <div class="rate-card">
+                                    <div class="carrier-name">${rate.carrier} - ${rate.service_type} ${rankBadge}</div>
+                                    <div class="rate-details">
+                                        <div class="detail-item">
+                                            <strong>💰 Rate:</strong> ${rate.rate}
+                                        </div>
+                                        <div class="detail-item">
+                                            <strong>🧮 Calculation:</strong> ${rate.calculation}
+                                        </div>
+                                        <div class="detail-item">
+                                            <strong>🎯 Match:</strong> ${rate.matched_country}
+                                        </div>
+                                        <div class="detail-item">
+                                            <strong>⚖️ Weight Tier:</strong> ${rate.weight_tier}kg
+                                        </div>
+                                        <div class="detail-item">
+                                            <strong>🔍 Method:</strong> ${rate.match_type.replace('_', ' ')}
+                                        </div>
+                                        ${rate.zone ? `<div class="detail-item"><strong>🌐 Zone:</strong> ${rate.zone}</div>` : ''}
+                                        ${rate.reasoning ? `<div class="detail-item"><strong>💡 Why:</strong> ${rate.reasoning}</div>` : ''}
+                                    </div>
+                                </div>
+                            `;
+                        });
+                        
+                        resultsDiv.innerHTML = html;
+                    } else {
+                        resultsDiv.innerHTML = '<div class="no-results">🏢 No shipping options available for this destination and weight combination.</div>';
+                    }
                     
                 } catch (error) {
                     console.error('Network error:', error);
-                    resultsDiv.innerHTML = `<div class="error">Network error: ${error.message}. Please check the console for more details.</div>`;
+                    resultsDiv.innerHTML = `<div class="error">❌ Network error: ${error.message}</div>`;
                 }
             }
             
-            // Allow Enter key to trigger search
             document.addEventListener('keypress', function(e) {
                 if (e.key === 'Enter') {
                     findRates();
                 }
             });
             
-            // Initialize weight display
             updateWeightDisplay();
         </script>
     </body>
@@ -1064,15 +1119,19 @@ def internal_error(error):
     return jsonify({'error': 'Internal server error'}), 500
 
 if __name__ == '__main__':
-    print("Starting Majithia International Courier Rate Finder...")
-    print("Smart shipping rate calculator with intelligent matching")
+    print("🏢 Starting Majithia International Courier Rate Finder...")
+    print("✨ Professional shipping rate calculator with AI intelligence")
+    
+    if not gemini_service.api_key:
+        print("⚠️  Warning: GEMINI_API_KEY not found in environment variables")
+        print("   Please add your Gemini API key to .env file")
     
     if data_manager.master_data:
-        print("Ready to serve professional rate requests!")
-        print("Access your app at: http://localhost:5000")
+        print("✅ Ready to serve professional rate requests!")
+        print("🌐 Access your app at: http://localhost:5000")
     else:
-        print("Master data not loaded. Starting server anyway for debugging...")
-        print("Access your app at: http://localhost:5000")
+        print("❌ Master data not loaded. Starting server anyway for debugging...")
+        print("🌐 Access your app at: http://localhost:5000")
     
     # Use different configurations for development vs production
     debug_mode = os.getenv('FLASK_ENV') == 'development'
