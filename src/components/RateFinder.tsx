@@ -317,4 +317,4 @@ function RateFinder() {
   );
 }
 
-xport default RateFinder;
+export default RateFinder;
