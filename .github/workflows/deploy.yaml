@@ -27,6 +27,7 @@ jobs:
         VITE_API_URL: ${{ secrets.VITE_API_URL }}
         VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
         VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        VITE_ADMIN_PASSWORD: ${{ secrets.VITE_ADMIN_PASSWORD }}
     
     - name: Deploy to gh-pages branch
       uses: peaceiris/actions-gh-pages@v3
