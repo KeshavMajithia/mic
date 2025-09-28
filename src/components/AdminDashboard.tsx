@@ -38,11 +38,12 @@ const AdminDashboard: React.FC = () => {
     const checkDevMode = () => {
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
       const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-      const isDevMode = !supabaseUrl || !supabaseKey || supabaseUrl.includes('placeholder');
+      const adminPassword = import.meta.env.VITE_ADMIN_PASSWORD || '';
+      const isDevMode = !supabaseUrl || !supabaseKey || supabaseUrl.includes('placeholder') || !adminPassword;
       setDevMode(isDevMode);
       
       if (isDevMode) {
-        console.warn('Development mode: Using Supabase with provided credentials');
+        console.warn('Development mode: Using fallback credentials');
       }
     };
     
@@ -64,8 +65,13 @@ const AdminDashboard: React.FC = () => {
       //   password: password
       // });
       
-      // For now, use a simple password check
-      if (password === 'admin123') {
+      // Get admin password from environment variable
+      const adminPassword = import.meta.env.VITE_ADMIN_PASSWORD;
+      
+      // Fallback for development mode
+      const validPassword = adminPassword;
+      
+      if (password === validPassword) {
         setAuthenticated(true);
         setError('');
       } else {
@@ -167,8 +173,7 @@ const AdminDashboard: React.FC = () => {
         <main className="max-w-md mx-auto px-6 py-12">
           {devMode && (
             <div className="mb-8 p-4 bg-yellow-50 border border-yellow-200 rounded-lg animate-fade-in">
-              <p className="text-yellow-800 font-medium">⚠️ Development Mode: Supabase is not configured with real credentials.</p>
-              <p className="text-yellow-700 text-sm mt-2">Login will use mock data. Use password: <strong>admin123</strong></p>
+              <p className="text-yellow-800 font-medium">⚠️ Development Mode: Admin password not configured in environment variables.</p>
             </div>
           )}
           
@@ -245,7 +250,7 @@ const AdminDashboard: React.FC = () => {
         {devMode && (
           <div className="mb-8 p-4 bg-yellow-50 border border-yellow-200 rounded-lg animate-fade-in">
             <p className="text-yellow-800 font-medium">⚠️ Development Mode: Displaying mock booking data.</p>
-            <p className="text-yellow-700 text-sm mt-2">Configure your .env.local file with real Supabase credentials for production use.</p>
+            <p className="text-yellow-700 text-sm mt-2">Configure your environment variables with real credentials for production use.</p>
           </div>
         )}
         
